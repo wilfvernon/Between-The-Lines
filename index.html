@@ -1,107 +1,300 @@
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>Quince & Canvas</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Galatea Fine Art</title>
 
-<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Inter&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Inter&display=swap" rel="stylesheet">
 
-<style>
-body {
-  margin:0;
-    background:#f6f3ee;
-      color:#2b2b2b;
-        font-family: Inter, system-ui;
-        }
+  <style>
+    * {
+      box-sizing: border-box;
+    }
 
-        .wrap {
-          max-width:720px;
-            margin:0 auto;
-              padding:60px 20px;
-              }
+    body {
+      margin: 0;
+      background: #f6f3ee;
+      color: #2b2b2b;
+      font-family: Inter, system-ui;
+    }
 
-              h1 {
-                font-family: Libre Baskerville, serif;
-                  margin:0;
-                  }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 60px 20px;
+    }
 
-                  .subtitle {
-                    margin-top:6px;
-                      opacity:.7;
-                      }
+    h1 {
+      font-family: Libre Baskerville, serif;
+      margin: 0 0 12px 0;
+      font-size: 32px;
+    }
 
-                      .note {
-                        margin:30px 0 60px;
-                          font-style:italic;
-                          }
+    .subtitle {
+      margin-top: 6px;
+      opacity: 0.7;
+      margin-bottom: 8px;
+    }
 
-                          .item {
-                            margin-bottom:80px;
-                            }
+    .note {
+      margin: 0 0 60px 0;
+      font-style: italic;
+      opacity: 0.8;
+    }
 
-                            .item img {
-                              max-width:100%;
-                                display:block;
-                                  margin-bottom:12px;
-                                  }
+    /* Gallery Grid */
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 30px;
+      margin-bottom: 60px;
+    }
 
-                                  .name {
-                                    font-family: Libre Baskerville, serif;
-                                      font-size:22px;
-                                        margin:0;
-                                        }
+    .painting {
+      cursor: pointer;
+      position: relative;
+      aspect-ratio: 1;
+      background: white;
+      border: 1px solid #ccc;
+      transition: transform 0.2s, box-shadow 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
 
-                                        .meta {
-                                          opacity:.7;
-                                            font-size:14px;
-                                              margin-top:4px;
-                                              }
+    .painting:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    }
 
-                                              .short {
-                                                margin:10px 0;
-                                                }
+    .painting img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
 
-                                                details {
-                                                  margin-top:10px;
-                                                  }
+    /* Modal */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.6);
+      animation: fadeIn 0.2s;
+    }
 
-                                                  hr {
-                                                    border:none;
-                                                      border-top:1px solid #ddd;
-                                                        margin:60px 0;
-                                                        }
-                                                        </style>
-                                                        </head>
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
 
-                                                        <body>
-                                                        <div class="wrap">
-                                                          <h1 id="title"></h1>
-                                                            <div class="subtitle" id="subtitle"></div>
-                                                              <div class="note" id="note"></div>
+    .modal.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
 
-                                                                <div id="wall"></div>
-                                                                </div>
+    .modal-content {
+      background: white;
+      border-radius: 8px;
+      max-width: 900px;
+      width: 90%;
+      max-height: 90vh;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      padding: 40px;
+      position: relative;
+      animation: slideUp 0.3s;
+      align-items: center;
+    }
 
-                                                                <script>
-                                                                fetch("items.json").then(r=>r.json()).then(data=>{
-                                                                  title.textContent = data.title;
-                                                                    subtitle.textContent = data.subtitle;
-                                                                      note.textContent = data.note;
+    @keyframes slideUp {
+      from {
+        transform: translateY(20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
 
-                                                                        wall.innerHTML = data.items.map(i=>`
-                                                                            <div class="item">
-                                                                                  ${i.image ? `<img src="${i.image}">` : ""}
-                                                                                        <div class="name">${i.name}</div>
-                                                                                              <div class="meta">${i.rarity} · ${i.price}</div>
-                                                                                                    <div class="short">${i.short}</div>
-                                                                                                          <details>
-                                                                                                                  <summary>Details</summary>
-                                                                                                                          <p>${i.details}</p>
-                                                                                                                                </details>
-                                                                                                                                      <hr>
-                                                                                                                                          </div>
-                                                                                                                                            `).join("");
-                                                                                                                                            });
-                                                                                                                                            </script>
-                                                                                                                                            </body>
-                                                                                                                                            </html>
+    .modal-image {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: contain;
+      border-radius: 4px;
+      background: white;
+    }
+
+    .modal-details {
+      align-self: start;
+      overflow-y: auto;
+      max-height: calc(90vh - 80px);
+      padding-right: 16px;
+    }
+
+    .modal-details h2 {
+      font-family: Libre Baskerville, serif;
+      font-size: 28px;
+      margin: 0 0 12px 0;
+    }
+
+    .modal-type {
+      font-style: italic;
+      opacity: 0.7;
+      margin-bottom: 20px;
+    }
+
+    .modal-attunement {
+      background: #f0ebe5;
+      padding: 12px 16px;
+      border-left: 3px solid #8b5a3c;
+      margin-bottom: 20px;
+      font-size: 14px;
+      border-radius: 2px;
+    }
+
+    .modal-description {
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+
+    .modal-description strong {
+      font-weight: 700;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: none;
+      border: none;
+      font-size: 28px;
+      cursor: pointer;
+      color: #2b2b2b;
+      transition: color 0.2s;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-close:hover {
+      color: #666;
+    }
+
+    /* Mobile */
+    @media (max-width: 768px) {
+      .gallery {
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 20px;
+      }
+
+      .modal-content {
+        grid-template-columns: 1fr;
+        gap: 24px;
+        padding: 24px;
+        width: 95%;
+      }
+
+      .modal-details h2 {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1 id="title"></h1>
+    <div class="subtitle" id="subtitle"></div>
+    <div class="note" id="note"></div>
+
+    <div class="gallery" id="gallery"></div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal" id="modal">
+    <div class="modal-content">
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <img class="modal-image" id="modalImage" src="" alt="">
+      <div class="modal-details">
+        <h2 id="modalName"></h2>
+        <div class="modal-type" id="modalType"></div>
+        <div class="modal-attunement" id="modalAttunement" style="display:none;"></div>
+        <div class="modal-description" id="modalDescription"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Simple markdown parser for bold text
+    function parseMarkdown(text) {
+      return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    }
+
+    // Load and display items
+    fetch("items.json").then(r => r.json()).then(data => {
+      title.textContent = data.title;
+      subtitle.textContent = data.subtitle;
+      note.textContent = data.note;
+
+      // Build gallery
+      gallery.innerHTML = data.items.map((item, idx) => `
+        <div class="painting" onclick="openModal(${idx})">
+          <img src="${item.image}" alt="${item.name}">
+        </div>
+      `).join("");
+
+      // Store items for modal
+      window.items = data.items;
+    });
+
+    function openModal(index) {
+      const item = window.items[index];
+      document.getElementById('modalImage').src = item.image;
+      document.getElementById('modalName').textContent = item.name;
+      document.getElementById('modalType').textContent = `${item.type}, ${item.rarity}`;
+      
+      const attunementDiv = document.getElementById('modalAttunement');
+      if (item.attunement) {
+        attunementDiv.textContent = `Requires attunement. ${item.attunement}`;
+        attunementDiv.style.display = 'block';
+      } else {
+        attunementDiv.style.display = 'none';
+      }
+      
+      document.getElementById('modalDescription').innerHTML = parseMarkdown(item.description);
+      document.getElementById('modal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('modal').classList.remove('active');
+    }
+
+    // Close modal when clicking outside content
+    document.getElementById('modal').addEventListener('click', function(event) {
+      if (event.target === this) {
+        closeModal();
+      }
+    });
+
+    // Close modal with Escape key
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') {
+        closeModal();
+      }
+    });
+  </script>
+</body>
+</html>
