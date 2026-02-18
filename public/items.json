@@ -1,0 +1,14 @@
+{
+  "title": "Galatea Fine Art",
+  "note": "These are the ones that worked.",
+  "items": [
+    {
+      "name": "Angler's Wand",
+      "type": "Wand",
+      "rarity": "uncommon",
+      "attunement": null,
+      "image": "https://firebasestorage.googleapis.com/v0/b/griffons-saddlebag.appspot.com/o/images%2F_STH2PAGX%2Fmedium.png?alt=media&token=b01ff914-87b4-4e7f-a7e3-f2adc0d7b1ff",
+      "description": "While holding this wand, you can use an action to speak its command word to transform it into a fishing rod, complete with line and tackle. It remains in this form until you use an action to speak its command word again to transform it back into the wand.\n\nThe wand has 7 charges for the following properties. The number of charges remaining are represented by the amount of spectral fish that swim around you while holding it.\n\n**Fish Slap.** While holding the wand, you can use an action to expend 1 of the wand's charges to send one of the spectral fish toward a target that you can see within 60 feet of you. The fish then grows in size, swims through the air to the target, and smacks the target with its oversized tail or fins. Make a ranged spell attack against the target, using an attack bonus of +5. On a hit, the target takes 1d12 + 3 force damage.\n\n**Reel In.** While holding the wand, you can use an action to point it at a target that you can see within 60 feet of you and expend 1 of its charges. The target must succeed on a DC 13 Strength saving throw. On a failed save, it's pulled up to 30 feet toward you and is considered hooked for 1 minute or until the target is more than 120 feet away from you."
+    }
+  ]
+}
