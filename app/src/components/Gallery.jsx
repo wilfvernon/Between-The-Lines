@@ -1,3 +1,5 @@
+import PropTypes from 'prop-types';
+
 function Gallery({ items, onItemClick }) {
   return (
     <div className="gallery">
@@ -15,5 +17,15 @@ function Gallery({ items, onItemClick }) {
     </div>
   );
 }
+
+Gallery.propTypes = {
+  items: PropTypes.arrayOf(
+    PropTypes.shape({
+      name: PropTypes.string,
+      image: PropTypes.string.isRequired,
+    })
+  ).isRequired,
+  onItemClick: PropTypes.func.isRequired,
+};
 
 export default Gallery;

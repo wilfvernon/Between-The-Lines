@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import PropTypes from 'prop-types';
 
 function renderDescription(text = '') {
   return text.split(/\*\*(.*?)\*\*/g).map((part, index) => {
@@ -72,5 +73,18 @@ function Modal({ item, isOpen, onClose }) {
     </div>
   );
 }
+
+Modal.propTypes = {
+  item: PropTypes.shape({
+    image: PropTypes.string,
+    name: PropTypes.string,
+    type: PropTypes.string,
+    rarity: PropTypes.string,
+    attunement: PropTypes.string,
+    description: PropTypes.string,
+  }),
+  isOpen: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+};
 
 export default Modal;
