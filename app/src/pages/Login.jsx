@@ -86,7 +86,7 @@ function Login() {
       didSucceed = true;
       setIsSuccessSequence(true);
       successNavigateTimeoutRef.current = window.setTimeout(() => {
-        navigate('/bookshelf');
+        navigate('/character');
       }, 4800);
     } catch {
       setAbjurationFailBurst((count) => count + 1);

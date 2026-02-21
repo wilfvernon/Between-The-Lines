@@ -24,6 +24,8 @@ export default function CharacterImporter({
   const [characterReviewOpen, setCharacterReviewOpen] = useState(false);
   const [asiEditing, setAsiEditing] = useState(null);
   const [asiForm, setAsiForm] = useState(null);
+  const [availableUsers, setAvailableUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState('');
 
   const formatFailName = (fail) => {
     if (typeof fail?.name === 'string') return fail.name;
@@ -49,6 +51,24 @@ export default function CharacterImporter({
     if (!reviewOpenNonce || !reviewData) return;
     setReviewOpen(true);
   }, [reviewOpenNonce]);
+
+  // Fetch available users for admin assignment
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        // Try to fetch users from a server API endpoint (if you set one up)
+        // For now, just get the current user as an option
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          setAvailableUsers([user]);
+          setSelectedUserId(user.id);
+        }
+      } catch (err) {
+        console.error('Failed to fetch users:', err);
+      }
+    };
+    fetchUsers();
+  }, []);
 
   const updateReviewEntry = (type, listKey, index, updates) => {
     setReviewData((prev) => {
@@ -352,18 +372,18 @@ export default function CharacterImporter({
     setStatus('');
 
     try {
-      // Get current user ID from Supabase auth
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
+      // Validate user selection
+      if (!selectedUserId) throw new Error('Please select a user to assign this character to');
 
-      // Update character with real user ID
-      characterData.character.userId = user.id;
+      // Update character with selected user ID
+      characterData.character.userId = selectedUserId;
 
       // Transform camelCase character data to snake_case for Supabase
       const char = characterData.character;
       const characterPayload = {
         user_id: char.userId,
         name: char.name,
+        full_name: char.fullName ?? null,
         level: char.level,
         classes: char.classes, // Already JSONB
         species: char.species,
@@ -1174,6 +1194,51 @@ export default function CharacterImporter({
           border: '1px solid #2196F3'
         }}>
           <h3 style={{ marginTop: 0 }}>Character Ready to Save</h3>
+
+          <div style={{ marginBottom: '20px', padding: '15px', background: '#fff', borderRadius: '4px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+              Assign to User:
+            </label>
+            <div style={{ marginBottom: '12px' }}>
+              <select
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: '4px',
+                  border: '1px solid #ccc',
+                  fontSize: '16px'
+                }}
+              >
+                <option value="">-- Select user or enter ID below --</option>
+                {availableUsers.map(user => (
+                  <option key={user.id} value={user.id}>
+                    {user.email} (Current)
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#666' }}>
+                Or paste a user ID:
+              </label>
+              <input
+                type="text"
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                placeholder="Paste user UUID here"
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: '4px',
+                  border: '1px solid #ccc',
+                  fontSize: '14px',
+                  fontFamily: 'monospace'
+                }}
+              />
+            </div>
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px' }}>
             <div>

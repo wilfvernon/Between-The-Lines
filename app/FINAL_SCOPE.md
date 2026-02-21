@@ -10,7 +10,8 @@ A **mobile-first PWA character sheet** for your 6-person D&D 2024 party. Players
 ### **1. CHARACTER DISPLAY & CORE STATS**
 
 #### Display Fields (Read-Only Calculated)
-- Name, level, class/subclass, species, background
+- Name / Full name (e.g., "Hazel" or "Hazel the Spirited")
+- Level, class/subclass, species, background
 - All 6 ability scores + modifiers
 - Proficiency bonus
 - AC (calculated from armor + items)

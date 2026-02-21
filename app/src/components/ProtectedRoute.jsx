@@ -6,7 +6,11 @@ function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <div className="route-loading">Loading...</div>;
+    return (
+      <div className="route-loading">
+        <img src="/crest.png" alt="" className="loading-crest" />
+      </div>
+    );
   }
 
   if (!user) {

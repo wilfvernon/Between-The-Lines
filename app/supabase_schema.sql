@@ -57,6 +57,7 @@ CREATE TABLE characters (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name VARCHAR(255) NOT NULL,
+  full_name TEXT,
   level INTEGER NOT NULL CHECK (level >= 1 AND level <= 20),
   classes JSONB NOT NULL,
   species VARCHAR(255) NOT NULL,

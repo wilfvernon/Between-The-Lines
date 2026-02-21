@@ -69,6 +69,7 @@ function extractCharacterCore(char, userId) {
   return {
     userId,
     name: char.name,
+    fullName: null,
     level,
     classes,
     species: char.race?.fullName || 'Unknown',

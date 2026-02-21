@@ -42,6 +42,9 @@
 }
 
 .app-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   font-size: 1.25rem;
   font-weight: 600;
   color: var(--candlekeep-accent-light);
@@ -50,6 +53,13 @@
     0 2px 4px rgba(0, 0, 0, 0.8);
   font-family: 'Cinzel', 'Georgia', serif;
   letter-spacing: 1px;
+}
+
+.app-crest {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
 }
 
 .header-user {
@@ -61,6 +71,7 @@
 .user-email {
   color: var(--candlekeep-text);
   font-size: 0.9rem;
+  letter-spacing: 0.6px;
 }
 
 .sign-out-btn {

@@ -21,6 +21,7 @@ async function insertCharacter(transformedData) {
       .insert({
         user_id: transformedData.character.userId,
         name: transformedData.character.name,
+        full_name: transformedData.character.fullName,
         level: transformedData.character.level,
         classes: transformedData.character.classes,
         species: transformedData.character.species,

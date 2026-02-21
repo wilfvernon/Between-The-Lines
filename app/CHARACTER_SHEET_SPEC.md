@@ -20,6 +20,7 @@ CREATE TABLE characters (
   
   -- Basic Identity
   name VARCHAR(255) NOT NULL,
+  full_name TEXT, -- Long form name for display (e.g., "Hazel Whisperwind the Brave")
   level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 20), -- Total character level
   class VARCHAR(100) NOT NULL, -- Primary class or "Fighter 3 / Wizard 2" for multiclass
   subclass VARCHAR(100),
