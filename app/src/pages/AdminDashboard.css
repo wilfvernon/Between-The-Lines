@@ -14,6 +14,35 @@
   gap: 1rem;
 }
 
+.admin-books-wrap {
+  display: grid;
+  gap: 1rem;
+}
+
+.admin-subtabs {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.admin-subtab {
+  border: 1px solid var(--candlekeep-surface-light);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--candlekeep-text-dim);
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.admin-subtab.is-active {
+  border-color: var(--candlekeep-accent);
+  color: var(--candlekeep-text);
+  background: rgba(145, 38, 51, 0.22);
+}
+
 .admin-card {
   background: var(--candlekeep-surface);
   border: 1px solid var(--candlekeep-surface-light);
@@ -85,6 +114,52 @@
 .admin-form button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.admin-tag-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.admin-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.admin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(84, 58, 32, 0.4);
+  border: 1px solid rgba(160, 135, 110, 0.4);
+  color: var(--candlekeep-text);
+  font-size: 0.8rem;
+}
+
+.admin-chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--candlekeep-text-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.admin-chip-remove:hover {
+  color: var(--candlekeep-text);
+}
+
+.admin-chip-empty {
+  color: var(--candlekeep-text-dim);
+  font-size: 0.85rem;
 }
 
 .admin-status {

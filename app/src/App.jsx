@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -12,6 +13,43 @@ import AdminDashboard from './pages/AdminDashboard';
 import './App.css';
 
 function App() {
+  const [fontsReady, setFontsReady] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const waitForFonts = async () => {
+      if (document.fonts && document.fonts.ready) {
+        await Promise.allSettled([
+          document.fonts.load('400 1em "Goudy Bookletter 1911"'),
+          document.fonts.load('400 1em "Libre Baskerville"'),
+          document.fonts.load('400 1em "Inter"'),
+          document.fonts.load('400 1em "Cormorant Unicase"'),
+          document.fonts.load('400 1em "Medieval Sharp"'),
+        ]);
+        await document.fonts.ready;
+      }
+
+      if (isMounted) {
+        setFontsReady(true);
+      }
+    };
+
+    waitForFonts();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  if (!fontsReady) {
+    return (
+      <div className="route-loading">
+        <img src="/crest.png" alt="" className="loading-crest" />
+      </div>
+    );
+  }
+
   return (
     <AuthProvider>
       <BrowserRouter>

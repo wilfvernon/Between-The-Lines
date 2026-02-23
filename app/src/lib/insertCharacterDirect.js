@@ -1,3 +1,4 @@
+/* global process */
 import { supabase } from './supabaseNode.js';
 import { transformDnDBeyondCharacter } from './characterTransformer.js';
 import { readFileSync } from 'fs';

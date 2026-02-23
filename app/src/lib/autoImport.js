@@ -19,7 +19,7 @@ export async function autoImportSpells(spellNames) {
   for (const spellName of spellNames) {
     try {
       // Check if spell already exists
-      const { data: existing, error: checkError } = await supabase
+      const { data: existing } = await supabase
         .from('spells')
         .select('name')
         .eq('name', spellName)
@@ -33,7 +33,7 @@ export async function autoImportSpells(spellNames) {
       // Doesn't exist, scrape it
       console.log(`[Auto-import] Scraping spell: ${spellName}`);
       const url = getSpellUrl(spellName);
-      const { html, attemptedUrls } = await fetchWikidot(url);
+      const { html } = await fetchWikidot(url);
       const spellData = parseSpellHtml(html);
       
       // Insert into DB
@@ -67,7 +67,7 @@ export async function autoImportItems(itemNames) {
   for (const itemName of itemNames) {
     try {
       // Check if item already exists
-      const { data: existing, error: checkError } = await supabase
+      const { data: existing } = await supabase
         .from('magic_items')
         .select('name')
         .eq('name', itemName)
@@ -81,7 +81,7 @@ export async function autoImportItems(itemNames) {
       // Doesn't exist, scrape it
       console.log(`[Auto-import] Scraping item: ${itemName}`);
       const url = getItemUrl(itemName);
-      const { html, attemptedUrls } = await fetchWikidot(url);
+      const { html } = await fetchWikidot(url);
       const itemData = parseItemHtml(html);
       
       // Insert into DB
@@ -115,7 +115,7 @@ export async function autoImportFeats(featNames) {
   for (const featName of featNames) {
     try {
       // Check if feat already exists
-      const { data: existing, error: checkError } = await supabase
+      const { data: existing } = await supabase
         .from('feats')
         .select('name')
         .eq('name', featName)
@@ -129,7 +129,7 @@ export async function autoImportFeats(featNames) {
       // Doesn't exist, scrape it
       console.log(`[Auto-import] Scraping feat: ${featName}`);
       const url = getFeatUrl(featName);
-      const { html, attemptedUrls } = await fetchWikidot(url);
+      const { html } = await fetchWikidot(url);
       const featData = parseFeatHtml(html);
       
       // Insert into DB

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import PropTypes from 'prop-types';
 import { supabase } from '../lib/supabase';
 import { fetchWikidot } from '../lib/wikidotUtils';
 import { parseFeatHtml } from '../lib/wikidotScrapers';
@@ -15,7 +16,6 @@ export default function FeatManagement({ prefill, onPrefillConsumed }) {
   // Scraper fields
   const [wikidotInput, setWikidotInput] = useState('http://dnd2024.wikidot.com/feat:fey-touched');
   const [inputMode, setInputMode] = useState('url'); // 'url' or 'html'
-  const [scrapedData, setScrapedData] = useState(null);
 
   // Status
   const [status, setStatus] = useState('');
@@ -26,7 +26,6 @@ export default function FeatManagement({ prefill, onPrefillConsumed }) {
     setPrerequisites('');
     setDescription('');
     setBenefits('');
-    setScrapedData(null);
   };
 
   useEffect(() => {
@@ -42,7 +41,7 @@ export default function FeatManagement({ prefill, onPrefillConsumed }) {
     }
     setStatus('⚠️ Prefilled from character import. Review and save.');
     onPrefillConsumed?.();
-  }, [prefill?._nonce]);
+  }, [prefill, onPrefillConsumed]);
 
   const scrapeWikidot = async (e) => {
     e.preventDefault();
@@ -59,7 +58,6 @@ export default function FeatManagement({ prefill, onPrefillConsumed }) {
       }
 
       const scraped = parseFeatHtml(html);
-      setScrapedData(scraped);
 
       setName(scraped.name || '');
       setPrerequisites(scraped.prerequisites || '');
@@ -85,7 +83,7 @@ export default function FeatManagement({ prefill, onPrefillConsumed }) {
       if (benefits.trim()) {
         try {
           benefitsJson = JSON.parse(benefits);
-        } catch (err) {
+        } catch {
           throw new Error('Benefits must be valid JSON or empty');
         }
       }
@@ -318,3 +316,8 @@ export default function FeatManagement({ prefill, onPrefillConsumed }) {
     </div>
   );
 }
+
+FeatManagement.propTypes = {
+  prefill: PropTypes.object,
+  onPrefillConsumed: PropTypes.func
+};

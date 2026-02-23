@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import PropTypes from 'prop-types';
 import { supabase } from '../lib/supabase';
 import { fetchWikidot } from '../lib/wikidotUtils';
 import { parseSpellHtml } from '../lib/wikidotScrapers';
@@ -20,7 +21,6 @@ export default function SpellManagement({ prefill, onPrefillConsumed }) {
   // Scraper fields
   const [wikidotInput, setWikidotInput] = useState('http://dnd2024.wikidot.com/spell:misty-step');
   const [inputMode, setInputMode] = useState('url'); // 'url' or 'html'
-  const [scrapedData, setScrapedData] = useState(null);
   
   // Status
   const [status, setStatus] = useState('');
@@ -36,7 +36,6 @@ export default function SpellManagement({ prefill, onPrefillConsumed }) {
     setDuration('');
     setDescription('');
     setHigherLevels('');
-    setScrapedData(null);
   };
 
   useEffect(() => {
@@ -53,7 +52,7 @@ export default function SpellManagement({ prefill, onPrefillConsumed }) {
     setHigherLevels(prefill.higher_levels || prefill.higherLevels || '');
     setStatus('⚠️ Prefilled from character import. Review and save.');
     onPrefillConsumed?.();
-  }, [prefill?._nonce]);
+  }, [prefill, onPrefillConsumed]);
 
   const scrapeWikidot = async (e) => {
     e.preventDefault();
@@ -73,8 +72,6 @@ export default function SpellManagement({ prefill, onPrefillConsumed }) {
       
       // Parse HTML using shared parser
       const scraped = parseSpellHtml(html);
-      
-      setScrapedData(scraped);
       
       // Populate form fields (don't auto-save)
       setName(scraped.name);
@@ -393,3 +390,8 @@ export default function SpellManagement({ prefill, onPrefillConsumed }) {
     </div>
   );
 }
+
+SpellManagement.propTypes = {
+  prefill: PropTypes.object,
+  onPrefillConsumed: PropTypes.func
+};

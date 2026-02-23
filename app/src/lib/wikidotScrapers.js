@@ -371,7 +371,7 @@ function parseSpellGrants(text, emphasizedSpellNames = []) {
     }
   });
 
-  const learnMatches = text.match(/learn the ([A-Z][A-Za-z'\- ]+?) spell/gi);
+  const learnMatches = text.match(/learn the ([A-Z][A-Za-z' -]+?) spell/gi);
   if (learnMatches) {
     learnMatches.forEach((match) => {
       const name = match.replace(/learn the/i, '').replace(/spell/i, '').trim();
@@ -382,7 +382,7 @@ function parseSpellGrants(text, emphasizedSpellNames = []) {
     });
   }
 
-  const castMatches = text.match(/cast ([A-Z][A-Za-z'\- ]+?) spell/gi);
+  const castMatches = text.match(/cast ([A-Z][A-Za-z' -]+?) spell/gi);
   if (castMatches) {
     castMatches.forEach((match) => {
       const name = match.replace(/cast/i, '').replace(/spell/i, '').trim();
@@ -445,14 +445,14 @@ function isLikelySpellName(name) {
   ]);
   if (blacklist.has(cleaned)) return false;
   if (!/[A-Z]/.test(cleaned)) return false;
-  return /^[A-Za-z'\- ]+$/.test(cleaned);
+  return /^[A-Za-z' -]+$/.test(cleaned);
 }
 
 function parseBonuses(text) {
   const bonuses = {};
 
   const hpPerLevelMatch = text.match(/hit point maximum (?:increases|increase) by (\d+) for each level/i);
-  const hpAgainMatch = text.match(/hit point maximum (?:increases|increase) by (\d+)[^\.\n]*again whenever you gain a level/i);
+  const hpAgainMatch = text.match(/hit point maximum (?:increases|increase) by (\d+)[^.\n]*again whenever you gain a level/i);
   if (hpPerLevelMatch) {
     bonuses.hp = { perLevel: parseInt(hpPerLevelMatch[1], 10) };
   } else if (hpAgainMatch) {

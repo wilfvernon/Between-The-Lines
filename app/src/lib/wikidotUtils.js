@@ -121,7 +121,7 @@ export async function fetchWikidot(url) {
       try {
         const html = await tryFetch(fallbackUrl);
         return { html, attemptedUrls };
-      } catch (fallbackError) {
+      } catch {
         // Both attempts failed; create error message with all attempted URLs
         const urlList = attemptedUrls.join(' → ');
         console.log(`[fetchWikidot] Both attempts failed: ${urlList}`);

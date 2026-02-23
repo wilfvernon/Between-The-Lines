@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import PropTypes from 'prop-types';
 import { supabase } from '../lib/supabase';
 import { transformDnDBeyondCharacter } from '../lib/characterTransformer';
 import { insertReferenceCandidates, prepareReferenceImports } from '../lib/autoImport';
 
 export default function CharacterImporter({
   onImportComplete,
-  onNavigateTab,
-  onPrefill,
   onReviewPendingChange,
   reviewOpenNonce
 }) {
@@ -16,7 +15,6 @@ export default function CharacterImporter({
   const [status, setStatus] = useState('');
   const [reviewData, setReviewData] = useState(null);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const [insertReport, setInsertReport] = useState(null);
   const [step, setStep] = useState('url'); // 'url', 'review', 'character-review', 'saved', 'error'
   const [editingEntry, setEditingEntry] = useState(null);
   const [editForm, setEditForm] = useState(null);
@@ -50,7 +48,7 @@ export default function CharacterImporter({
   useEffect(() => {
     if (!reviewOpenNonce || !reviewData) return;
     setReviewOpen(true);
-  }, [reviewOpenNonce]);
+  }, [reviewOpenNonce, reviewData]);
 
   // Fetch available users for admin assignment
   useEffect(() => {
@@ -198,8 +196,7 @@ export default function CharacterImporter({
         feats: reviewData.feats.candidates.filter((entry) => entry.approved)
       };
 
-      const report = await insertReferenceCandidates(approved);
-      setInsertReport(report);
+      await insertReferenceCandidates(approved);
       setStatus('✅ Reference data imported. Review character details.');
       setStep('character-review');
       setReviewOpen(false);
@@ -299,7 +296,6 @@ export default function CharacterImporter({
     setLoading(true);
     setStatus('');
     setReviewData(null);
-    setInsertReport(null);
 
     try {
       let dndBeyondJson;
@@ -307,7 +303,7 @@ export default function CharacterImporter({
       if (!jsonInput.trim()) throw new Error('Please paste the JSON content');
       try {
         dndBeyondJson = JSON.parse(jsonInput);
-      } catch (parseError) {
+      } catch {
         throw new Error('Invalid JSON: please paste the full character JSON');
       }
 
@@ -557,7 +553,6 @@ export default function CharacterImporter({
       setStatus(`✅ Character "${characterData.character.name}" saved successfully!`);
       setCharacterData(null);
       setReviewData(null);
-      setInsertReport(null);
       setJsonInput('');
       setStep('url');
       onReviewPendingChange?.(false);
@@ -1276,7 +1271,6 @@ export default function CharacterImporter({
             onClick={() => {
               setCharacterData(null);
               setReviewData(null);
-              setInsertReport(null);
               setJsonInput('');
               setStep('url');
               setStatus('');
@@ -1298,3 +1292,9 @@ export default function CharacterImporter({
     </div>
   );
 }
+
+CharacterImporter.propTypes = {
+  onImportComplete: PropTypes.func,
+  onReviewPendingChange: PropTypes.func,
+  reviewOpenNonce: PropTypes.oneOfType([PropTypes.number, PropTypes.string, PropTypes.bool])
+};

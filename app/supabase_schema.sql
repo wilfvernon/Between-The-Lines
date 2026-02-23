@@ -182,7 +182,15 @@ CREATE TABLE books (
   title TEXT NOT NULL,
   author TEXT NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-  cover_image_url TEXT
+  cover_image_url TEXT,
+  tags TEXT[] DEFAULT '{}'::text[]
+);
+
+-- Bookshelf config (front-end display preferences)
+CREATE TABLE bookshelf_config (
+  key TEXT PRIMARY KEY,
+  display_tags TEXT[] DEFAULT '{}'::text[],
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Chapters (within books)
@@ -208,3 +216,5 @@ CREATE INDEX idx_character_feats_feat_id ON character_feats(feat_id);
 CREATE INDEX idx_character_inventory_character_id ON character_inventory(character_id);
 CREATE INDEX idx_character_inventory_magic_item_id ON character_inventory(magic_item_id);
 CREATE INDEX idx_character_senses_character_id ON character_senses(character_id);
+CREATE INDEX idx_bookshelf_config_display_tags ON bookshelf_config USING GIN (display_tags);
+CREATE INDEX idx_books_tags ON books USING GIN (tags);

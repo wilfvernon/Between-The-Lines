@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import SpellManagement from '../components/SpellManagement';
 import MagicItemManagement from '../components/MagicItemManagement';
@@ -7,10 +7,16 @@ import CharacterImporter from '../components/CharacterImporter';
 import './AdminDashboard.css';
 
 const sortBooks = (items) => [...items].sort((left, right) => left.title.localeCompare(right.title));
+const normalizeTags = (value) => (value ?? '')
+  .split(',')
+  .map((tag) => tag.trim())
+  .filter(Boolean);
+const formatTags = (tags) => (Array.isArray(tags) ? tags.join(', ') : '');
 
 function AdminDashboard() {
   const [mainTab, setMainTab] = useState('books'); // 'books' or 'dnd'
   const [dndTab, setDndTab] = useState('spells'); // 'spells', 'items', 'feats', 'characters'
+  const [booksSubTab, setBooksSubTab] = useState('manage'); // 'manage' | 'config'
 
   const [spellPrefill, setSpellPrefill] = useState(null);
   const [itemPrefill, setItemPrefill] = useState(null);
@@ -44,6 +50,7 @@ function AdminDashboard() {
   const [bookTitle, setBookTitle] = useState('');
   const [bookAuthor, setBookAuthor] = useState('');
   const [bookCoverImage, setBookCoverImage] = useState('');
+  const [bookTags, setBookTags] = useState('');
   const [bookStatus, setBookStatus] = useState('');
   const [bookSubmitting, setBookSubmitting] = useState(false);
   const [editingBook, setEditingBook] = useState(null);
@@ -59,12 +66,18 @@ function AdminDashboard() {
   const [chapterEditSubmitting, setChapterEditSubmitting] = useState(false);
   const [chapterRefreshing, setChapterRefreshing] = useState(false);
 
+  const [bookshelfTags, setBookshelfTags] = useState([]);
+  const [bookshelfTagInput, setBookshelfTagInput] = useState('');
+  const [bookshelfStatus, setBookshelfStatus] = useState('');
+  const [bookshelfLoading, setBookshelfLoading] = useState(false);
+  const [bookshelfSaving, setBookshelfSaving] = useState(false);
+
   const loadBooks = useCallback(async () => {
     setBooksLoading(true);
 
     const { data, error } = await supabase
       .from('books')
-      .select('id, title, author, cover_image_url')
+      .select('id, title, author, cover_image_url, tags')
       .order('title', { ascending: true });
 
     if (error) {
@@ -82,6 +95,26 @@ function AdminDashboard() {
       return loadedBooks[0].id;
     });
     setBooksLoading(false);
+  }, []);
+
+  const loadBookshelfConfig = useCallback(async () => {
+    setBookshelfLoading(true);
+    setBookshelfStatus('');
+
+    const { data, error } = await supabase
+      .from('bookshelf_config')
+      .select('display_tags')
+      .eq('key', 'default')
+      .maybeSingle();
+
+    if (error) {
+      setBookshelfStatus(`Unable to load bookshelf config: ${error.message}`);
+      setBookshelfLoading(false);
+      return;
+    }
+
+    setBookshelfTags(Array.isArray(data?.display_tags) ? data.display_tags : []);
+    setBookshelfLoading(false);
   }, []);
 
   const loadChapters = async (bookId) => {
@@ -140,10 +173,62 @@ function AdminDashboard() {
   }, [loadBooks]);
 
   useEffect(() => {
+    loadBookshelfConfig();
+  }, [loadBookshelfConfig]);
+
+  useEffect(() => {
     loadChapters(selectedBookId);
   }, [selectedBookId]);
 
   const selectedBook = books.find((book) => book.id === selectedBookId);
+
+  const availableTags = useMemo(() => {
+    const tags = new Set();
+    books.forEach((book) => {
+      (book.tags ?? []).forEach((tag) => {
+        if (typeof tag === 'string' && tag.trim()) tags.add(tag.trim());
+      });
+    });
+    return Array.from(tags).sort((a, b) => a.localeCompare(b));
+  }, [books]);
+
+  const handleAddBookshelfTag = () => {
+    const nextTag = bookshelfTagInput.trim();
+    if (!nextTag) return;
+    setBookshelfTags((current) => {
+      const hasTag = current.some((tag) => tag.toLowerCase() === nextTag.toLowerCase());
+      return hasTag ? current : [...current, nextTag];
+    });
+    setBookshelfTagInput('');
+  };
+
+  const handleRemoveBookshelfTag = (tagToRemove) => {
+    setBookshelfTags((current) => current.filter((tag) => tag !== tagToRemove));
+  };
+
+  const handleSaveBookshelfConfig = async () => {
+    setBookshelfSaving(true);
+    setBookshelfStatus('');
+
+    const payload = {
+      key: 'default',
+      display_tags: bookshelfTags,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from('bookshelf_config')
+      .upsert(payload, { onConflict: 'key' });
+
+    if (error) {
+      setBookshelfStatus(`Failed to save bookshelf config: ${error.message}`);
+      setBookshelfSaving(false);
+      return;
+    }
+
+    setBookshelfStatus('Bookshelf config saved.');
+    setBookshelfSaving(false);
+  };
 
   const handleRefreshChapters = async () => {
     if (!selectedBookId) return;
@@ -162,12 +247,13 @@ function AdminDashboard() {
       title: bookTitle.trim(),
       author: bookAuthor.trim(),
       cover_image_url: bookCoverImage.trim() || null,
+      tags: normalizeTags(bookTags),
     };
 
     const { data, error } = await supabase
       .from('books')
       .insert(payload)
-      .select('id, title, author, cover_image_url')
+      .select('id, title, author, cover_image_url, tags')
       .single();
 
     if (error) {
@@ -180,6 +266,7 @@ function AdminDashboard() {
     setBookTitle('');
     setBookAuthor('');
     setBookCoverImage('');
+    setBookTags('');
     setBooks((currentBooks) => sortBooks([...currentBooks, data]));
     setSelectedBookId((currentId) => currentId || data.id);
     setBookSubmitting(false);
@@ -191,6 +278,7 @@ function AdminDashboard() {
       title: book.title,
       author: book.author,
       cover_image_url: book.cover_image_url ?? '',
+      tags: formatTags(book.tags),
     });
   };
 
@@ -204,13 +292,14 @@ function AdminDashboard() {
       title: editingBook.title.trim(),
       author: editingBook.author.trim(),
       cover_image_url: editingBook.cover_image_url.trim() || null,
+      tags: normalizeTags(editingBook.tags),
     };
 
     const { data, error } = await supabase
       .from('books')
       .update(payload)
       .eq('id', editingBook.id)
-      .select('id, title, author, cover_image_url')
+      .select('id, title, author, cover_image_url, tags')
       .single();
 
     if (error) {
@@ -383,10 +472,33 @@ function AdminDashboard() {
 
       {/* Books & Chapters View */}
       {mainTab === 'books' && (
-        <div className="admin-grid">
-          <section className="admin-card" aria-labelledby="admin-books-title">
-            <h2 id="admin-books-title">Books</h2>
-          <form className="admin-form" onSubmit={handleAddBook}>
+        <div className="admin-books-wrap">
+          <div className="admin-subtabs" role="tablist" aria-label="Books sections">
+            <button
+              type="button"
+              className={`admin-subtab ${booksSubTab === 'manage' ? 'is-active' : ''}`}
+              onClick={() => setBooksSubTab('manage')}
+              role="tab"
+              aria-selected={booksSubTab === 'manage'}
+            >
+              📚 Books & Chapters
+            </button>
+            <button
+              type="button"
+              className={`admin-subtab ${booksSubTab === 'config' ? 'is-active' : ''}`}
+              onClick={() => setBooksSubTab('config')}
+              role="tab"
+              aria-selected={booksSubTab === 'config'}
+            >
+              🧭 Bookshelf Config
+            </button>
+          </div>
+
+          {booksSubTab === 'manage' && (
+            <div className="admin-grid">
+              <section className="admin-card" aria-labelledby="admin-books-title">
+                <h2 id="admin-books-title">Books</h2>
+              <form className="admin-form" onSubmit={handleAddBook}>
             <label htmlFor="book-title">Title</label>
             <input
               id="book-title"
@@ -412,6 +524,15 @@ function AdminDashboard() {
               placeholder="https://.../cover.png"
               value={bookCoverImage}
               onChange={(event) => setBookCoverImage(event.target.value)}
+              disabled={bookSubmitting}
+            />
+
+            <label htmlFor="book-tags">Display Tags (comma-separated)</label>
+            <input
+              id="book-tags"
+              placeholder="folklore, horror, archives"
+              value={bookTags}
+              onChange={(event) => setBookTags(event.target.value)}
               disabled={bookSubmitting}
             />
 
@@ -450,6 +571,14 @@ function AdminDashboard() {
                         }
                         disabled={bookEditSubmitting}
                       />
+                      <input
+                        placeholder="folklore, horror, archives"
+                        value={editingBook.tags}
+                        onChange={(event) =>
+                          setEditingBook((current) => ({ ...current, tags: event.target.value }))
+                        }
+                        disabled={bookEditSubmitting}
+                      />
                       <div className="admin-actions">
                         <button
                           type="button"
@@ -475,6 +604,7 @@ function AdminDashboard() {
                         <strong>{book.title}</strong>
                         <span>{book.author}</span>
                         {book.cover_image_url && <span>Cover: {book.cover_image_url}</span>}
+                        {book.tags?.length ? <span>Tags: {book.tags.join(', ')}</span> : null}
                       </div>
                       <div className="admin-actions">
                         <button
@@ -669,6 +799,76 @@ function AdminDashboard() {
           {chapterDiagnostics && <p className="admin-status">{chapterDiagnostics}</p>}
         </section>
       </div>
+          )}
+
+          {booksSubTab === 'config' && (
+            <section className="admin-card" aria-labelledby="admin-bookshelf-title">
+              <div className="admin-section-head">
+                <h2 id="admin-bookshelf-title">Bookshelf Config</h2>
+                <button
+                  type="button"
+                  className="admin-action-btn"
+                  onClick={handleSaveBookshelfConfig}
+                  disabled={bookshelfSaving}
+                >
+                  {bookshelfSaving ? 'Saving…' : 'Save Config'}
+                </button>
+              </div>
+
+              <p className="admin-status admin-manage-note">
+                Select which tags should appear as bookshelf sections. These will be used when we re-enable tag rows.
+              </p>
+
+              <div className="admin-form">
+                <label htmlFor="bookshelf-tag-input">Add a tag</label>
+                <div className="admin-tag-input-row">
+                  <input
+                    id="bookshelf-tag-input"
+                    list="bookshelf-tag-options"
+                    placeholder="Start typing or pick a tag"
+                    value={bookshelfTagInput}
+                    onChange={(event) => setBookshelfTagInput(event.target.value)}
+                    disabled={bookshelfLoading}
+                  />
+                  <button
+                    type="button"
+                    className="admin-action-btn"
+                    onClick={handleAddBookshelfTag}
+                    disabled={bookshelfLoading}
+                  >
+                    Add
+                  </button>
+                </div>
+                <datalist id="bookshelf-tag-options">
+                  {availableTags.map((tag) => (
+                    <option key={tag} value={tag} />
+                  ))}
+                </datalist>
+
+                <div className="admin-chip-row" role="list">
+                  {bookshelfTags.length === 0 && (
+                    <span className="admin-chip-empty">No tags selected yet.</span>
+                  )}
+                  {bookshelfTags.map((tag) => (
+                    <span key={tag} className="admin-chip" role="listitem">
+                      {tag}
+                      <button
+                        type="button"
+                        className="admin-chip-remove"
+                        onClick={() => handleRemoveBookshelfTag(tag)}
+                        aria-label={`Remove ${tag}`}
+                      >
+                        x
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {bookshelfStatus && <p className="admin-status">{bookshelfStatus}</p>}
+            </section>
+          )}
+        </div>
       )}
 
       {/* D&D Content View */}

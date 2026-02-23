@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import PropTypes from 'prop-types';
 import { supabase } from '../lib/supabase';
 import { fetchWikidot } from '../lib/wikidotUtils';
 import { parseItemHtml } from '../lib/wikidotScrapers';
@@ -17,7 +18,6 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
   // Scraper fields
   const [wikidotInput, setWikidotInput] = useState('http://dnd2024.wikidot.com/magic-item:bag-of-holding');
   const [inputMode, setInputMode] = useState('url'); // 'url' or 'html'
-  const [scrapedData, setScrapedData] = useState(null);
   
   // Status
   const [status, setStatus] = useState('');
@@ -30,7 +30,6 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     setAttunementRequired('');
     setDescription('');
     setProperties('');
-    setScrapedData(null);
   };
 
   useEffect(() => {
@@ -48,7 +47,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     }
     setStatus('⚠️ Prefilled from character import. Review and save.');
     onPrefillConsumed?.();
-  }, [prefill?._nonce]);
+  }, [prefill, onPrefillConsumed]);
 
   const scrapeWikidot = async (e) => {
     e.preventDefault();
@@ -68,8 +67,6 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
       
       // Parse HTML using shared parser
       const scraped = parseItemHtml(html);
-      
-      setScrapedData(scraped);
       
       // Populate form fields (don't auto-save)
       setName(scraped.name || '');
@@ -104,7 +101,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
       if (properties.trim()) {
         try {
           propertiesJson = JSON.parse(properties);
-        } catch (err) {
+        } catch {
           throw new Error('Properties must be valid JSON or empty');
         }
       }
@@ -315,7 +312,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
           <div>
             <label>Attunement Required 
               <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#666' }}>
-                {' '}(e.g., "Yes", "a spellcaster", "a cleric")
+                {' '}(e.g., &quot;Yes&quot;, &quot;a spellcaster&quot;, &quot;a cleric&quot;)
               </span>
             </label>
             <input 
@@ -373,3 +370,8 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     </div>
   );
 }
+
+MagicItemManagement.propTypes = {
+  prefill: PropTypes.object,
+  onPrefillConsumed: PropTypes.func
+};

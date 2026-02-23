@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Previewer } from 'pagedjs';
+import useEmblaCarousel from 'embla-carousel-react';
 import { supabase } from '../lib/supabase';
 import './Bookshelf.css';
 
@@ -12,7 +13,7 @@ const PAGE_GUTTER_X = 2;
 const PAGE_GUTTER_Y = 8;
 const HEADER_GUTTER = 12;
 const PAGE_ASPECT_RATIO = 1024 / 1536;
-const ESTIMATED_PAGES_PER_CHAPTER = 16;
+const RECENT_BOOK_LIMIT = 16;
 
 const escapeHtml = (value) =>
   (value ?? '')
@@ -62,7 +63,6 @@ const calculateChapterStartPage = (bookTitle, chapterNum) => {
 
 const buildPagedMarkup = (book, chapters) => {
   const bookTitle = escapeHtml(book?.title ?? '');
-  const rawBookTitle = book?.title ?? '';
   const cover = book?.cover_image_url
     ? `<section class="book-cover-page" data-book-title="${bookTitle}"><img src="${escapeHtml(
         book.cover_image_url
@@ -77,8 +77,6 @@ const buildPagedMarkup = (book, chapters) => {
         .filter(Boolean)
         .map((part) => `<span class="book-chapter-line">${escapeHtml(part)}</span>`)
         .join('');
-
-      const chapterNum = extractChapterNumber(chapter.title) ?? chapterIndex + 1;
 
       return `
         <section class="book-chapter-page chapter-page-${chapterIndex}" data-letterhead="${escapeHtml(chapter.title ?? '')}">
@@ -99,7 +97,7 @@ const buildPagedMarkup = (book, chapters) => {
   return `${cover}${chapterSections}`;
 };
 
-const buildPagedStyles = (pageConfig, book, chapters) => {
+const buildPagedStyles = (pageConfig) => {
   return `
   @page {
     size: ${pageConfig.width}px ${pageConfig.height}px;
@@ -267,7 +265,96 @@ const buildReaderPages = (book, chapters) => {
   return pages;
 };
 
+function BookshelfCarousel({ title, books, onBookOpen }) {
+  const [emblaRef, emblaApi] = useEmblaCarousel({
+    align: 'start',
+    containScroll: 'trimSnaps',
+    dragFree: true,
+  });
+  const [canPrev, setCanPrev] = useState(false);
+  const [canNext, setCanNext] = useState(false);
+
+  const updateControls = useCallback(() => {
+    if (!emblaApi) return;
+    setCanPrev(emblaApi.canScrollPrev());
+    setCanNext(emblaApi.canScrollNext());
+  }, [emblaApi]);
+
+  useEffect(() => {
+    if (!emblaApi) return;
+    updateControls();
+    emblaApi.on('select', updateControls);
+    emblaApi.on('reInit', updateControls);
+    return () => {
+      emblaApi.off('select', updateControls);
+      emblaApi.off('reInit', updateControls);
+    };
+  }, [emblaApi, updateControls]);
+
+  const scrollPrev = useCallback(() => emblaApi?.scrollPrev(), [emblaApi]);
+  const scrollNext = useCallback(() => emblaApi?.scrollNext(), [emblaApi]);
+
+  if (!books || books.length === 0) return null;
+
+  return (
+    <section className="bookshelf-section">
+      <div className="bookshelf-section-head">
+        <h2 className="bookshelf-section-title">{title}</h2>
+        <div className="bookshelf-carousel-controls">
+          <button
+            type="button"
+            className="bookshelf-carousel-btn"
+            onClick={scrollPrev}
+            disabled={!canPrev}
+            aria-label="Scroll previous"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M14.5 6l-6 6 6 6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="bookshelf-carousel-btn"
+            onClick={scrollNext}
+            disabled={!canNext}
+            aria-label="Scroll next"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M9.5 6l6 6-6 6" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div className="bookshelf-carousel" ref={emblaRef}>
+        <div className="bookshelf-carousel-track">
+          {books.map((book) => (
+            <button
+              key={book.id}
+              type="button"
+              className="bookshelf-tile"
+              onClick={() => onBookOpen(book.id)}
+            >
+              <div className="bookshelf-tile-cover">
+                {book.cover_image_url ? (
+                  <img src={book.cover_image_url} alt={`${book.title ?? 'Book'} cover`} />
+                ) : (
+                  <div className="bookshelf-cover-fallback" aria-hidden="true" />
+                )}
+              </div>
+              <div className="bookshelf-tile-meta">
+                <span className="bookshelf-tile-title">{book.title}</span>
+                <span className="bookshelf-tile-author">{book.author}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Bookshelf() {
+  const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
   const [books, setBooks] = useState([]);
   const [activeBookId, setActiveBookId] = useState('');
   const [chapters, setChapters] = useState([]);
@@ -292,8 +379,8 @@ function Bookshelf() {
 
       const { data, error } = await supabase
         .from('books')
-        .select('id, title, author, cover_image_url')
-        .order('title', { ascending: true });
+        .select('id, title, author, cover_image_url, created_at')
+        .order('created_at', { ascending: false });
 
       if (error) {
         setStatus(`Unable to load books: ${error.message}`);
@@ -355,6 +442,13 @@ function Bookshelf() {
     [books, activeBookId]
   );
 
+  const recentBooks = useMemo(() => {
+    return [...books]
+      .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
+      .slice(0, RECENT_BOOK_LIMIT);
+  }, [books]);
+
+
   const openBook = (bookId) => {
     setActiveBookId(bookId);
     setCurrentPage(0);
@@ -383,7 +477,7 @@ function Bookshelf() {
     return buildReaderPages(activeBook, chapters);
   }, [activeBook, chapters]);
 
-  const activePage = readerPages[currentPage] ?? null;
+  const isCoverOnly = !loadingChapters && chapters.length === 0 && !!activeBook?.cover_image_url;
 
   useEffect(() => {
     setCurrentPage(0);
@@ -456,7 +550,7 @@ function Bookshelf() {
         content.innerHTML = buildPagedMarkup(activeBook, chapters);
 
         const previewer = new Previewer();
-        const styles = buildPagedStyles(pageConfig, activeBook, chapters);
+        const styles = buildPagedStyles(pageConfig);
         const styleUrl = URL.createObjectURL(new Blob([styles], { type: 'text/css' }));
 
         try {
@@ -549,21 +643,12 @@ function Bookshelf() {
     });
   };
 
-  const openFromCover = () => {
-    const total = pagedTotalPages;
-    if (total <= 1) return;
-    if (currentPage !== 0) return;
-    movePage(1);
-  };
-
-  const handleReaderTap = () => {
-    if (currentPage !== 0) return;
-    openFromCover();
-  };
-
   return (
     <div className="page-container bookshelf-page">
-      <h1>Bookshelf</h1>
+      <div className="bookshelf-title-wrap" role="heading" aria-level="1">
+        <span className="bookshelf-title">Bookshelf</span>
+        <div className="bookshelf-title-divider" aria-hidden="true" />
+      </div>
 
       {status && <p className="bookshelf-status">{status}</p>}
       {loadingBooks && <p className="bookshelf-status">Loading books...</p>}
@@ -572,23 +657,22 @@ function Bookshelf() {
         <p className="bookshelf-status">No books available yet.</p>
       )}
 
-      <section className="bookshelf-list" aria-label="Book list">
-        {books.map((book) => (
-          <button
-            key={book.id}
-            type="button"
-            className="bookshelf-list-item"
-            onClick={() => openBook(book.id)}
-          >
-            <span className="bookshelf-list-title">{book.title}</span>
-            <span className="bookshelf-list-author">{book.author}</span>
-          </button>
-        ))}
-      </section>
+      {!loadingBooks && books.length > 0 && (
+        <div className="bookshelf-sections">
+          <BookshelfCarousel
+            title="Recent additions"
+            books={recentBooks}
+            onBookOpen={openBook}
+          />
+        </div>
+      )}
 
       {activeBook && (
         <div className="reader-modal-backdrop" onClick={closeReader}>
-          <div className="reader-modal" onClick={closeReader}>
+          <div
+            className={`reader-modal${isCoverOnly ? ' is-cover-only' : ''}`}
+            onClick={closeReader}
+          >
             <button
               type="button"
               className="reader-close-btn reader-icon-btn"
@@ -598,13 +682,27 @@ function Bookshelf() {
               }}
               aria-label="Close reader"
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M6 6l12 12M18 6l-12 12" />
-              </svg>
+              <span className="icon-cross" style={{ '--icon-url': `url(${crossIconSrc})` }} aria-hidden="true" />
             </button>
 
             {loadingChapters && <p className="bookshelf-status">Loading chapters...</p>}
-            {!loadingChapters && chapters.length === 0 && (
+            {!loadingChapters && chapters.length === 0 && activeBook?.cover_image_url && (
+              <div className="reader-paged-output" ref={pagedWrapperRef}>
+                <div
+                  className="reader-paged-frame"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="reader-cover-only">
+                    <img
+                      src={activeBook.cover_image_url}
+                      alt={`${activeBook.title ?? 'Book'} cover`}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!loadingChapters && chapters.length === 0 && !activeBook?.cover_image_url && (
               <p className="bookshelf-status">No chapters for this book yet.</p>
             )}
 

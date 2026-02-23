@@ -8,36 +8,36 @@ Building a complete D&D 2024 character sheet system with D&D Beyond import, admi
 ## Phase 1: Database Foundation
 
 ### 1.1 Supabase Schema Setup
-- [ ] Create `characters` table with all core fields
-- [ ] Create `character_skills` table
-- [ ] Create `character_features` table
-- [ ] Create `character_senses` table
-- [ ] Create `character_currency` table
-- [ ] Create `character_class_specific` table (JSONB)
+- [x] Create `characters` table with all core fields
+- [x] Create `character_skills` table
+- [x] Create `character_features` table
+- [x] Create `character_senses` table
+- [x] Create `character_currency` table
+- [x] Create `character_class_specific` table (JSONB)
 
 ### 1.2 Reference Data Tables
-- [ ] Create `spells` table (name, level, school, description, components, etc.)
-- [ ] Create `magic_items` table (name, type, rarity, description, properties)
-- [ ] Create `feats` table (name, description, prerequisites, benefits)
+- [x] Create `spells` table (name, level, school, description, components, etc.)
+- [x] Create `magic_items` table (name, type, rarity, description, properties)
+- [x] Create `feats` table (name, description, prerequisites, benefits)
 
 ### 1.3 Character Relationships
-- [ ] Create `character_spells` junction table (character ↔ spell)
-- [ ] Create `character_inventory` table (handles both magic items and mundane)
-- [ ] Create `character_feats` junction table (character ↔ feat)
+- [x] Create `character_spells` junction table (character ↔ spell)
+- [x] Create `character_inventory` table (handles both magic items and mundane)
+- [x] Create `character_feats` junction table (character ↔ feat)
 
 ### 1.4 Indexes & Constraints
-- [ ] Add indexes on `user_id`, `character_id` foreign keys
-- [ ] Add unique constraints where needed
-- [ ] Add check constraints (level 1-20, ability scores 1-30, etc.)
+- [x] Add indexes on `user_id`, `character_id` foreign keys
+- [x] Add unique constraints where needed
+- [x] Add check constraints (level 1-20, ability scores 1-30, etc.)
 
 ### 1.5 Row Level Security (RLS)
-- [ ] Enable RLS on all tables
-- [ ] Create SELECT policies (users see own characters)
-- [ ] Create INSERT policies (users create own characters)
-- [ ] Create UPDATE policies (users update own characters)
-- [ ] Create DELETE policies (users delete own characters)
-- [ ] Create admin bypass policies for admin users
-- [ ] Create admin role/flag in user metadata
+- [x] Enable RLS on all tables
+- [x] Create SELECT policies (users see own characters)
+- [x] Create INSERT policies (users create own characters)
+- [x] Create UPDATE policies (users update own characters)
+- [x] Create DELETE policies (users delete own characters)
+- [x] Create admin bypass policies for admin users
+- [x] Create admin role/flag in user metadata
 
 ---
 
@@ -45,19 +45,19 @@ Building a complete D&D 2024 character sheet system with D&D Beyond import, admi
 
 ### 2.1 Admin Authentication & Access Control
 - [ ] Add `is_admin` field to user profiles or metadata
-- [ ] Create `AdminRoute` component (extends `ProtectedRoute`)
+- [x] Create `AdminRoute` component (extends `ProtectedRoute`)
 - [ ] Add admin check to `AuthContext`
-- [ ] Create admin navigation in dashboard
+- [x] Create admin navigation in dashboard
 
 ### 2.2 Spell Management
-- [ ] Build "Add Spell" form (name, level, school, casting time, range, components, duration, description, higher levels)
+- [x] Build "Add Spell" form (name, level, school, casting time, range, components, duration, description, higher levels)
 - [ ] Build "Spells List" view with search/filter (by level, school, name)
 - [ ] Build "Edit Spell" modal
 - [ ] Build "Delete Spell" confirmation
 - [ ] Import bulk spells (optional: from JSON or API)
 
 ### 2.3 Magic Item Management
-- [ ] Build "Add Magic Item" form (name, type, rarity, attunement, description, properties)
+- [x] Build "Add Magic Item" form (name, type, rarity, attunement, description, properties)
 - [ ] Build "Magic Items List" view with search/filter
 - [ ] Build "Edit Magic Item" modal
 - [ ] Build "Delete Magic Item" confirmation
@@ -66,7 +66,7 @@ Building a complete D&D 2024 character sheet system with D&D Beyond import, admi
 - [ ] Handle charge-based items
 
 ### 2.4 Feat Management
-- [ ] Build "Add Feat" form (name, description, prerequisites)
+- [x] Build "Add Feat" form (name, description, prerequisites)
 - [ ] Build "Feats List" view with search/filter
 - [ ] Build "Edit Feat" modal
 - [ ] Delete feat confirmation
@@ -76,14 +76,14 @@ Building a complete D&D 2024 character sheet system with D&D Beyond import, admi
 ## Phase 3: Character Creation & Import
 
 ### 3.1 D&D Beyond Import
-- [ ] Create import UI (input D&D Beyond character ID)
-- [ ] Connect to D&D Beyond API (or paste JSON)
-- [ ] Show preview of imported character
-- [ ] Confirm import → insert into database
-- [ ] Error handling for failed imports
-- [ ] Map imported data to our schema (already built transformer)
+- [x] Create import UI (input D&D Beyond character ID)
+- [x] Connect to D&D Beyond API (or paste JSON)
+- [x] Show preview of imported character
+- [x] Confirm import → insert into database
+- [x] Error handling for failed imports
+- [x] Map imported data to our schema (already built transformer)
 
-### 3.2 Manual Character Creation (Future)
+### 3.2 Manual Character Creation (Unnecessary - only editing needed, not creation)
 - [ ] Build character creation wizard
 - [ ] Step 1: Name, class, species, level
 - [ ] Step 2: Ability scores
@@ -92,11 +92,10 @@ Building a complete D&D 2024 character sheet system with D&D Beyond import, admi
 - [ ] Step 5: Equipment
 - [ ] Save to database
 
-### 3.3 Character Roster
+### 3.3 Character Roster (unnecessary)
 - [ ] Build character selection page
 - [ ] Show all user's characters (cards/list)
 - [ ] "Import" button → D&D Beyond import flow
-- [ ] "Create" button → manual creation (future)
 - [ ] "Delete" character option
 
 ### 3.4 Initial Character Setup (6 Party Members)
@@ -110,51 +109,51 @@ Building a complete D&D 2024 character sheet system with D&D Beyond import, admi
 ## Phase 4: Character Sheet Display (Read-Only)
 
 ### 4.1 Data Fetching & State Management
-- [ ] Create `useCharacter` hook (fetch character by ID)
-- [ ] Fetch all related data (skills, spells, inventory, features, etc.)
-- [ ] Combine into unified character object
-- [ ] Add loading and error states
+- [x] Create `useCharacter` hook (fetch character by ID)
+- [x] Fetch all related data (skills, spells, inventory, features, etc.)
+- [x] Combine into unified character object
+- [x] Add loading and error states
 
 ### 4.2 Calculated Values & Game Rules
-- [ ] Calculate ability modifiers: `Math.floor((score - 10) / 2)`
-- [ ] Calculate proficiency bonus: `Math.ceil(level / 4) + 1`
-- [ ] Calculate skill bonuses: `abilityMod + (proficient ? profBonus : 0) + (expertise ? profBonus : 0)`
-- [ ] Calculate saving throw bonuses: `abilityMod + (proficient ? profBonus : 0)`
+- [x] Calculate ability modifiers: `Math.floor((score - 10) / 2)`
+- [x] Calculate proficiency bonus: `Math.ceil(level / 4) + 1`
+- [x] Calculate skill bonuses: `abilityMod + (proficient ? profBonus : 0) + (expertise ? profBonus : 0)`
+- [x] Calculate saving throw bonuses: `abilityMod + (proficient ? profBonus : 0)`
 - [ ] Calculate spell attack bonus: `profBonus + castingAbilityMod`
 - [ ] Calculate spell save DC: `8 + profBonus + castingAbilityMod`
 - [ ] Calculate AC from equipped armor + DEX mod + shields
-- [ ] Calculate initiative: `dexMod`
-- [ ] Calculate passive perception: `10 + Perception bonus`
+- [x] Calculate initiative: `dexMod`
+- [x] Calculate passive perception: `10 + Perception bonus`
 - [ ] Calculate max spell slots by class & level
 - [ ] Utility functions file: `characterCalculations.js`
 
 ### 4.3 Header Section
-- [ ] Display name (editable inline later)
+- [x] Display name (editable inline later)
 - [ ] Display level, class/subclass, species
-- [ ] Display character avatar/image (optional)
+- [x] Display character avatar/image (optional)
 
 ### 4.4 Vital Stats Panel
-- [ ] Display current HP / max HP (with color coding)
-- [ ] Display temp HP field (session state)
-- [ ] Display AC (calculated)
-- [ ] Display initiative (calculated)
-- [ ] Display speed
+- [x] Display current HP / max HP (with color coding)
+- [x] Display temp HP field (session state)
+- [x] Display AC (calculated)
+- [x] Display initiative (calculated)
+- [x] Display speed
 
 ### 4.5 Ability Scores
-- [ ] Display 6 ability scores in grid
-- [ ] Display modifiers below each score
-- [ ] Visual indicator for save proficiencies
+- [x] Display 6 ability scores in grid
+- [x] Display modifiers below each score
+- [x] Visual indicator for save proficiencies
 
 ### 4.6 Skills & Saves
-- [ ] Display all 6 saving throws with bonuses
-- [ ] Display all 18 skills with bonuses
-- [ ] Visual indicators for proficiency/expertise
-- [ ] Display passive perception
-- [ ] Display senses (darkvision, etc.)
+- [x] Display all 6 saving throws with bonuses
+- [x] Display all 18 skills with bonuses
+- [x] Visual indicators for proficiency/expertise
+- [x] Display passive perception
+- [x] Display senses (darkvision, etc.)
 
 ### 4.7 Spellcasting
 - [ ] Display spell attack bonus & spell DC
-- [ ] Group spells by level (cantrips, 1-9)
+- [x] Group spells by level (cantrips, 1-9)
 - [ ] Show prepared spells highlighted
 - [ ] Show spell slots (max only, for now)
 - [ ] Spell modal/expandable for full description
@@ -183,13 +182,13 @@ Building a complete D&D 2024 character sheet system with D&D Beyond import, admi
 
 ### 5.1 HP Management
 - [ ] Add +5, +1, -1, -5 buttons for HP adjustment
-- [ ] Add direct input field for precise HP changes
-- [ ] Add temp HP input field
-- [ ] Enforce HP can't go below 0 or above max
+- [x] Add direct input field for precise HP changes
+- [x] Add temp HP input field
+- [x] Enforce HP can't go below 0 or above max
 - [ ] Color-code HP bar (green → yellow → red)
 - [ ] Toast notifications for HP changes
-- [ ] Store current HP in component state (not DB)
-- [ ] Local storage persistence (optional)
+- [x] Store current HP in component state (not DB)
+- [x] Local storage persistence (optional)
 
 ### 5.2 Spell Slot Tracking (Session State)
 - [ ] Visual spell slot circles (filled = used, empty = available)

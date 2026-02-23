@@ -42,15 +42,19 @@ function Layout() {
         user.email?.split('@')[0] ||
         'User';
 
+      if (isAdmin) {
+        if (isMounted) setDisplayName(fallbackName);
+        return;
+      }
+
       try {
         const { data, error } = await supabase
           .from('characters')
           .select('full_name,name')
           .eq('user_id', user.id)
-          .limit(1)
-          .single();
+          .maybeSingle();
 
-        if (error && error.code !== 'PGRST116') throw error;
+        if (error) throw error;
 
         if (isMounted) {
           setDisplayName(data?.full_name || data?.name || fallbackName);
