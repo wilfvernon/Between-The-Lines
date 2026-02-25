@@ -278,7 +278,32 @@ function extractSpells(char) {
 }
 
 /**
+ * Manual benefit mappings for known features
+ * Maps feature names to their structured benefits
+ */
+const featureBenefitMappings = {
+  'Scholar of Yore': [
+    {
+      type: 'skill_modifier_bonus',
+      skills: ['religion', 'history'],
+      bonus_source: 'charisma_modifier'
+    }
+  ]
+};
+
+/**
+ * Get benefits for a feature by name
+ */
+const getFeatureBenefits = (featureName) => {
+  return featureBenefitMappings[featureName] || null;
+};
+
+/**
  * Extract features from race and class
+ * Features now include source structured as:
+ * - species traits: { level: 1, source: 'species' }
+ * - class features: { level: classLevel, source: 'class' }
+ * - background features: { level: 1, source: 'background' }
  */
 function extractFeatures(char) {
   const features = [];
@@ -287,12 +312,14 @@ function extractFeatures(char) {
   if (char.race?.racialTraits) {
     char.race.racialTraits.forEach(trait => {
       if (trait.definition) {
+        const benefitName = trait.definition.name;
         features.push({
-          name: trait.definition.name,
-          source: 'species',
+          name: benefitName,
+          source: { level: 1, source: 'species' },
           description: stripHtml(trait.definition.description || ''),
           max_uses: trait.limitedUse?.maxUses || null,
           reset_on: mapResetType(trait.limitedUse?.resetType),
+          benefits: getFeatureBenefits(benefitName)
         });
       }
     });
@@ -300,14 +327,19 @@ function extractFeatures(char) {
   
   // Class features
   if (char.classes?.[0]?.classFeatures) {
+    const classLevel = char.classes[0].level || 1;
     char.classes[0].classFeatures.forEach(feature => {
       if (feature.definition) {
+        // Try to determine the level at which this feature is gained from requiredLevel
+        const featureLevel = feature.definition?.requiredLevel || classLevel;
+        const benefitName = feature.definition.name;
         features.push({
-          name: feature.definition.name,
-          source: 'class',
+          name: benefitName,
+          source: { level: featureLevel, source: 'class' },
           description: stripHtml(feature.definition.description || ''),
           max_uses: feature.limitedUse?.maxUses || null,
           reset_on: mapResetType(feature.limitedUse?.resetType),
+          benefits: getFeatureBenefits(benefitName)
         });
       }
     });
@@ -315,12 +347,14 @@ function extractFeatures(char) {
   
   // Background features
   if (char.background?.definition?.featureName) {
+    const benefitName = char.background.definition.featureName;
     features.push({
-      name: char.background.definition.featureName,
-      source: 'background',
+      name: benefitName,
+      source: { level: 1, source: 'background' },
       description: stripHtml(char.background.definition.featureDescription || ''),
       max_uses: null,
       reset_on: null,
+      benefits: getFeatureBenefits(benefitName)
     });
   }
   
@@ -402,6 +436,9 @@ function extractAbilityScoreImprovements(char) {
 
 /**
  * Extract feats
+ * Feats now include source structured as:
+ * - background feats: { level: 1, source: 'background' }
+ * - level feats: { level: levelGained, source: 'level' }
  */
 function extractFeats(char) {
   const feats = [];
@@ -440,10 +477,18 @@ function extractFeats(char) {
           abilityNames
         );
 
+        // Determine source level (when the feat was acquired)
+        // Background feats are level 1, other feats may have a requiredLevel
+        const isBackgroundFeat = feat.componentTypeId === 12168134;
+        const sourceLevel = isBackgroundFeat ? 1 : (feat.definition?.requiredLevel || 1);
+
         feats.push({
           // Store feat name for later lookup of feat_id in the feats table
           name: featName,
-          source: feat.componentTypeId === 12168134 ? 'background' : 'level',
+          source: { 
+            level: sourceLevel, 
+            source: isBackgroundFeat ? 'background' : 'level'
+          },
           choices,
         });
       }

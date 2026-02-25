@@ -11,7 +11,6 @@ const buildCharacter = (base, related) => {
     features: related.features || [],
     feats: related.feats || [],
     senses: related.senses || [],
-    currency: related.currency || null,
     class_specific: related.classSpecific || null
   };
 };
@@ -81,19 +80,19 @@ export const useCharacter = ({ user, isAdmin }) => {
 
       setRelatedLoading(true);
       try {
-        const [skillsRes, spellsRes, inventoryRes, featuresRes, featsRes, sensesRes, currencyRes, classSpecificRes] = await Promise.all([
+        const [skillsRes, spellsRes, inventoryRes, featuresRes, featsRes, sensesRes] = await Promise.all([
           supabase.from('character_skills').select('*').eq('character_id', selectedCharacterId),
           supabase
             .from('character_spells')
             .select('*, spell:spells(*)')
             .eq('character_id', selectedCharacterId)
             .order('spell(level)', { ascending: true }),
-          supabase.from('character_inventory').select('*').eq('character_id', selectedCharacterId),
+          supabase.from('character_inventory').select('*, equipment(*), magic_item:magic_items(*)').eq('character_id', selectedCharacterId),
           supabase.from('character_features').select('*').eq('character_id', selectedCharacterId),
           supabase.from('character_feats').select('*').eq('character_id', selectedCharacterId),
-          supabase.from('character_senses').select('*').eq('character_id', selectedCharacterId),
-          supabase.from('character_currency').select('*').eq('character_id', selectedCharacterId).single(),
-          supabase.from('character_class_specific').select('*').eq('character_id', selectedCharacterId).single()
+          supabase.from('character_senses').select('*').eq('character_id', selectedCharacterId)
+          // character_class_specific commented out - RLS policy causes 406 errors, re-enable when needed
+          // supabase.from('character_class_specific').select('*').eq('character_id', selectedCharacterId).single()
         ]);
 
         if (skillsRes.error) throw skillsRes.error;
@@ -103,23 +102,13 @@ export const useCharacter = ({ user, isAdmin }) => {
         if (featsRes.error) throw featsRes.error;
         if (sensesRes.error) throw sensesRes.error;
 
-        const currency = currencyRes.error && currencyRes.error.code === 'PGRST116'
-          ? null
-          : currencyRes.data || null;
-
-        const classSpecific = classSpecificRes.error && classSpecificRes.error.code === 'PGRST116'
-          ? null
-          : classSpecificRes.data || null;
-
         const related = {
           skills: skillsRes.data || [],
           spells: spellsRes.data || [],
           inventory: inventoryRes.data || [],
           features: featuresRes.data || [],
           feats: featsRes.data || [],
-          senses: sensesRes.data || [],
-          currency,
-          classSpecific
+          senses: sensesRes.data || []
         };
 
         setCharacter((prev) => buildCharacter(prev || baseCharacter, related));
@@ -134,6 +123,25 @@ export const useCharacter = ({ user, isAdmin }) => {
     fetchRelatedData();
   }, [selectedCharacterId, baseCharacter]);
 
+  const refetchInventory = async () => {
+    if (!selectedCharacterId) return;
+    try {
+      const { data, error: err } = await supabase
+        .from('character_inventory')
+        .select('*, equipment(*), magic_item:magic_items(*)')
+        .eq('character_id', selectedCharacterId);
+      
+      if (err) throw err;
+      
+      setCharacter((prev) => (prev ? {
+        ...prev,
+        inventory: data || []
+      } : null));
+    } catch (err) {
+      console.error('Error refetching inventory:', err);
+    }
+  };
+
   return {
     character,
     characters,
@@ -141,6 +149,7 @@ export const useCharacter = ({ user, isAdmin }) => {
     setSelectedCharacterId,
     loading,
     relatedLoading,
-    error
+    error,
+    refetchInventory
   };
 };

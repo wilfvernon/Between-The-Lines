@@ -177,19 +177,201 @@ CREATE TABLE character_features (
   character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   
   name VARCHAR(255) NOT NULL,
-  source VARCHAR(50) NOT NULL, -- 'class', 'species', 'background', 'feat'
+  source JSONB NOT NULL, -- Structured as { level: number, source: string }
   description TEXT,
   
   -- Usage tracking (for limited-use features)
-  max_uses INTEGER, -- NULL for unlimited features
+  max_uses VARCHAR(100), -- Can be number like '3' or stat reference like 'proficiency_bonus', 'wisdom_modifier', '1 + wisdom_modifier', NULL for unlimited
   reset_on VARCHAR(20), -- 'short', 'long', 'dawn', NULL
+  
+  -- Feature benefits (bonuses, passive effects, etc.)
+  benefits JSONB,
   
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 ```
 
+**Source JSON Structure:**
+
+```json
+{
+  "level": 1,        // The character level at which this feature is gained
+  "source": "class"  // 'class', 'subclass', 'species', 'background', 'feat'
+}
+```
+
+**Examples:**
+
+Racial trait (gained at level 1):
+```json
+{
+  "level": 1,
+  "source": "species"
+}
+```
+
+Class feature (gained at level 2):
+```json
+{
+  "level": 2,
+  "source": "class"
+}
+```
+
+Background feature (gained at level 1):
+```json
+{
+  "level": 1,
+  "source": "background"
+}
+```
+
+**Benefits JSON Structure:**
+
+Benefits are stored as a JSON array of benefit objects. Each benefit represents a discrete mechanical effect. The `benefits` column contains only the structured data; all formatted text goes in the `description` column.
+
+**Benefit Types:**
+
+- **skill_proficiency**: Grants proficiency in a specific skill
+  ```json
+  {
+    "type": "skill_proficiency",
+    "skill": "history",
+    "alternate_skill": false
+  }
+  ```
+  - `skill`: skill name (lowercase, snake_case)
+  - `alternate_skill`: if true, character can substitute a different skill if already proficient
+
+- **skill_modifier_bonus**: Adds a modifier to specific skill checks
+  ```json
+  {
+    "type": "skill_modifier_bonus",
+    "skills": ["religion", "history"],
+    "bonus_source": "charisma_modifier"
+  }
+  ```
+  - `skills`: array of skill names affected
+  - `bonus_source`: standardized stat reference (charisma_modifier, proficiency_bonus, wisdom_modifier, etc.)
+
+- **skill_dual_ability**: Adds an extra ability modifier to listed skills
+  ```json
+  {
+    "type": "skill_dual_ability",
+    "skills": ["history", "religion"],
+    "ability": "charisma"
+  }
+  ```
+  - `skills`: array of skill names affected
+  - `ability`: ability key to add (strength, dexterity, constitution, intelligence, wisdom, charisma)
+
+- **skill_half_proficiency**: Adds half proficiency bonus to unproficient skills
+  ```json
+  {
+    "type": "skill_half_proficiency"
+  }
+  ```
+
+- **saving_throw_bonus**: Adds a modifier to saving throws
+  ```json
+  {
+    "type": "saving_throw_bonus",
+    "ability": "wisdom",
+    "bonus_source": "proficiency_bonus"
+  }
+  ```
+
+- **damage_bonus**: Adds damage to weapon attacks or spells
+  ```json
+  {
+    "type": "damage_bonus",
+    "damage_type": "fire",
+    "bonus_source": "charisma_modifier",
+    "condition": "when wielding fire spells"
+  }
+  ```
+  - `damage_type`: type of damage (fire, cold, etc., or "weapon" for weapon attacks)
+  - `condition`: optional context for when the bonus applies
+  - `bonus_source`: what stat provides the bonus
+
+- **ability_check_bonus**: Adds modifier to general ability checks
+  ```json
+  {
+    "type": "ability_check_bonus",
+    "ability": "strength",
+    "bonus_source": "proficiency_bonus"
+  }
+  ```
+
+- **passive_bonus**: Non-active bonuses (like Passive Perception increases)
+  ```json
+  {
+    "type": "passive_bonus",
+    "passive_name": "perception",
+    "bonus": 5
+  }
+  ```
+
+- **bonus_action**: Declares a bonus action on the feature card
+  ```json
+  {
+    "type": "bonus_action",
+    "name": "Bardic Inspiration",
+    "range": "60 ft",
+    "target": "creature that can see or hear you"
+  }
+  ```
+  - `name`: action label
+  - `range`: short range label for UI
+  - `target`: target summary for UI
+
+- **feature_die**: Declares a named feature die with scaling
+  ```json
+  {
+    "type": "feature_die",
+    "name": "Bardic Inspiration",
+    "die": "d6",
+    "scaling": {
+      "5": "d8",
+      "10": "d10",
+      "15": "d12"
+    }
+  }
+  ```
+  - `die`: starting die size
+  - `scaling`: map of character level to die size
+
+**Description Column Format:**
+
+The `description` field uses `\n\n` for paragraph breaks and `**text**` for bold emphasis. Whitespace is preserved as literal characters.
+
+**Example - Hermit Background Feature:**
+
+**benefits column:**
+```json
+[
+  {
+    "type": "skill_proficiency",
+    "skill": "history",
+    "alternate_skill": true
+  },
+  {
+    "type": "skill_modifier_bonus",
+    "skills": ["religion", "history"],
+    "bonus_source": "charisma_modifier"
+  }
+]
+```
+
+**description column:**
+```
+You gain proficiency in the **History** skill. If you already have proficiency, you may choose any other skill instead.\n\nAdditionally, when making a **Religion** or **History** check, you may add your **Charisma modifier** to the result.
+```
+
+
 **Session State (not stored)**:
 - Current uses remaining
+
 - Reset based on `reset_on` value
 
 ---
@@ -216,12 +398,39 @@ CREATE TABLE character_feats (
   character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   feat_id UUID NOT NULL REFERENCES feats(id) ON DELETE CASCADE,
   
-  source VARCHAR(50), -- 'level', 'background', 'species'
+  source JSONB, -- Structured as { level: number, source: string }
   
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   
   UNIQUE(character_id, feat_id)
 );
+```
+
+**Source JSON Structure:**
+
+```json
+{
+  "level": 2,      // The character level at which this feat was acquired
+  "source": "level" // 'level' or 'background'
+}
+```
+
+**Examples:**
+
+Feat acquired at level 1 from background:
+```json
+{
+  "level": 1,
+  "source": "background"
+}
+```
+
+Feat acquired at level 4 (standard ASI):
+```json
+{
+  "level": 4,
+  "source": "level"
+}
 ```
 
 ---

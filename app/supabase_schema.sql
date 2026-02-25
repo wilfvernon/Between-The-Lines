@@ -32,7 +32,7 @@ CREATE TABLE magic_items (
   name VARCHAR(255) NOT NULL UNIQUE,
   type VARCHAR(50),
   rarity VARCHAR(50),
-  requires_attunement VARCHAR(255),
+  requires_attunement VARCHAR(255) DEFAULT false,
   description TEXT NOT NULL,
   properties JSONB,
   image_url TEXT,
@@ -46,6 +46,22 @@ CREATE TABLE feats (
   description TEXT NOT NULL,
   prerequisites TEXT,
   benefits JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Equipment reference table (weapons, armor, adventuring gear, tools, etc.)
+-- Imported from D&D 5e API: 179 items
+CREATE TABLE equipment (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  api_index VARCHAR(255) NOT NULL UNIQUE,  -- "longsword", "chain-mail", etc.
+  name VARCHAR(255) NOT NULL,
+  type VARCHAR(100),                        -- "Weapon", "Armor", "Adventuring Gear"
+  weight NUMERIC(10, 2),                    -- in pounds
+  cost_quantity INTEGER,
+  cost_unit VARCHAR(20),                    -- "gp", "sp", "cp"
+  is_weapon BOOLEAN DEFAULT false,
+  is_consumable BOOLEAN DEFAULT false,
+  raw_data JSONB NOT NULL,                  -- Full API response for flexibility
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
@@ -93,7 +109,8 @@ CREATE TABLE character_skills (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   skill_name VARCHAR(255) NOT NULL,
-  expertise BOOLEAN DEFAULT false
+  expertise BOOLEAN DEFAULT false,
+  source TEXT
 );
 
 -- Character spells (prepared status tracking)
@@ -111,10 +128,11 @@ CREATE TABLE character_features (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   name VARCHAR(255) NOT NULL,
-  source VARCHAR(50) NOT NULL,
   description TEXT,
-  max_uses INTEGER,
+  max_uses VARCHAR(100),
   reset_on VARCHAR(50),
+  benefits JSONB,
+  source JSONB,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
@@ -123,25 +141,26 @@ CREATE TABLE character_feats (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   feat_id UUID NOT NULL REFERENCES feats(id) ON DELETE CASCADE,
-  source VARCHAR(50),
+  source JSONB,
   choices JSONB,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Character inventory
+-- NOTE: equipment_id and magic_item_id are mutually exclusive (constraint enforced)
 CREATE TABLE character_inventory (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   magic_item_id UUID REFERENCES magic_items(id) ON DELETE CASCADE,
-  mundane_item_name VARCHAR(255),
+  equipment_id UUID REFERENCES equipment(id) ON DELETE CASCADE,
   quantity INTEGER DEFAULT 1,
   equipped BOOLEAN DEFAULT false,
   attuned BOOLEAN DEFAULT false,
   notes TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-  CHECK (
-    (magic_item_id IS NOT NULL AND mundane_item_name IS NULL) OR
-    (magic_item_id IS NULL AND mundane_item_name IS NOT NULL)
+  CONSTRAINT equipment_or_magic CHECK (
+    (magic_item_id IS NOT NULL AND equipment_id IS NULL) OR
+    (magic_item_id IS NULL AND equipment_id IS NOT NULL)
   )
 );
 
@@ -215,6 +234,7 @@ CREATE INDEX idx_character_feats_character_id ON character_feats(character_id);
 CREATE INDEX idx_character_feats_feat_id ON character_feats(feat_id);
 CREATE INDEX idx_character_inventory_character_id ON character_inventory(character_id);
 CREATE INDEX idx_character_inventory_magic_item_id ON character_inventory(magic_item_id);
+CREATE INDEX idx_character_inventory_equipment_id ON character_inventory(equipment_id);
 CREATE INDEX idx_character_senses_character_id ON character_senses(character_id);
 CREATE INDEX idx_bookshelf_config_display_tags ON bookshelf_config USING GIN (display_tags);
 CREATE INDEX idx_books_tags ON books USING GIN (tags);

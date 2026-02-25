@@ -541,4 +541,253 @@ describe('CharacterSheet', () => {
       );
     });
   });
+
+  describe('Modifier Calculations with Custom Modifiers and Overrides', () => {
+    // Helper function matching CharacterSheet implementation
+    const calculateModifier = (score) => Math.floor((score - 10) / 2);
+
+    // Helper function matching CharacterSheet implementation
+    const getFinalAbilityScore = (abilityKey, baseScore, inspectorState) => {
+      const override = inspectorState.abilityCustomOverrides?.[abilityKey];
+      if (override !== null && override !== undefined) {
+        return override;
+      }
+      const customMods = inspectorState.abilityCustomModifiers?.[abilityKey] || [];
+      const customTotal = customMods.reduce((sum, mod) => sum + mod.value, 0);
+      return baseScore + customTotal;
+    };
+
+    describe('calculateModifier', () => {
+      it('should calculate modifier for score 10 as 0', () => {
+        expect(calculateModifier(10)).toBe(0);
+      });
+
+      it('should calculate modifier for score 18 as 4', () => {
+        expect(calculateModifier(18)).toBe(4);
+      });
+
+      it('should calculate modifier for score 20 as 5', () => {
+        expect(calculateModifier(20)).toBe(5);
+      });
+
+      it('should calculate modifier for score 8 as -1', () => {
+        expect(calculateModifier(8)).toBe(-1);
+      });
+
+      it('should calculate modifier for score 3 as -4', () => {
+        expect(calculateModifier(3)).toBe(-4);
+      });
+    });
+
+    describe('getFinalAbilityScore', () => {
+      it('should return base score when no modifiers or overrides', () => {
+        const inspectorState = {
+          abilityCustomModifiers: {},
+          abilityCustomOverrides: {}
+        };
+        expect(getFinalAbilityScore('strength', 16, inspectorState)).toBe(16);
+      });
+
+      it('should add custom modifiers to base score', () => {
+        const inspectorState = {
+          abilityCustomModifiers: {
+            strength: [
+              { source: 'Feat', value: 1 },
+              { source: 'Class', value: 2 }
+            ]
+          },
+          abilityCustomOverrides: {}
+        };
+        expect(getFinalAbilityScore('strength', 16, inspectorState)).toBe(19);
+      });
+
+      it('should handle negative custom modifiers', () => {
+        const inspectorState = {
+          abilityCustomModifiers: {
+            dexterity: [
+              { source: 'Curse', value: -3 }
+            ]
+          },
+          abilityCustomOverrides: {}
+        };
+        expect(getFinalAbilityScore('dexterity', 14, inspectorState)).toBe(11);
+      });
+
+      it('should use override value if set, ignoring modifiers', () => {
+        const inspectorState = {
+          abilityCustomModifiers: {
+            constitution: [
+              { source: 'Buff', value: 2 }
+            ]
+          },
+          abilityCustomOverrides: {
+            constitution: 20
+          }
+        };
+        expect(getFinalAbilityScore('constitution', 15, inspectorState)).toBe(20);
+      });
+    });
+
+    describe('Ability Score to Modifier Conversion', () => {
+      it('should update modifier when custom modifier is added (18 +2 = 20, modifier +4 to +5)', () => {
+        const baseScore = 18;
+        const baseMod = calculateModifier(baseScore); // +4
+
+        const inspectorState = {
+          abilityCustomModifiers: {
+            strength: [{ source: 'Feat', value: 2 }]
+          },
+          abilityCustomOverrides: {}
+        };
+
+        const finalScore = getFinalAbilityScore('strength', baseScore, inspectorState); // 20
+        const finalMod = calculateModifier(finalScore); // +5
+
+        expect(baseMod).toBe(4);
+        expect(finalScore).toBe(20);
+        expect(finalMod).toBe(5);
+      });
+
+      it('should update modifier when override is set (14 with override 18, modifier +2 to +4)', () => {
+        const baseScore = 14;
+        const baseMod = calculateModifier(baseScore); // +2
+
+        const inspectorState = {
+          abilityCustomModifiers: {},
+          abilityCustomOverrides: {
+            dexterity: 18
+          }
+        };
+
+        const finalScore = getFinalAbilityScore('dexterity', baseScore, inspectorState); // 18
+        const finalMod = calculateModifier(finalScore); // +4
+
+        expect(baseMod).toBe(2);
+        expect(finalScore).toBe(18);
+        expect(finalMod).toBe(4);
+      });
+
+      it('should handle multiple modifiers (15 +1 +1 = 17, modifier +2 to +3)', () => {
+        const baseScore = 15;
+        const baseMod = calculateModifier(baseScore); // +2
+
+        const inspectorState = {
+          abilityCustomModifiers: {
+            constitution: [
+              { source: 'Feat A', value: 1 },
+              { source: 'Feat B', value: 1 }
+            ]
+          },
+          abilityCustomOverrides: {}
+        };
+
+        const finalScore = getFinalAbilityScore('constitution', baseScore, inspectorState); // 17
+        const finalMod = calculateModifier(finalScore); // +3
+
+        expect(baseMod).toBe(2);
+        expect(finalScore).toBe(17);
+        expect(finalMod).toBe(3);
+      });
+
+      it('should handle negative modifier changes (16 -2 = 14, modifier +3 to +2)', () => {
+        const baseScore = 16;
+        const baseMod = calculateModifier(baseScore); // +3
+
+        const inspectorState = {
+          abilityCustomModifiers: {
+            strength: [
+              { source: 'Curse', value: -2 }
+            ]
+          },
+          abilityCustomOverrides: {}
+        };
+
+        const finalScore = getFinalAbilityScore('strength', baseScore, inspectorState); // 14
+        const finalMod = calculateModifier(finalScore); // +2
+
+        expect(baseMod).toBe(3);
+        expect(finalScore).toBe(14);
+        expect(finalMod).toBe(2);
+      });
+    });
+
+    describe('Complex Scenarios', () => {
+      it('should handle character with mixed ability modifications', () => {
+        const abilities = {
+          strength: 18,
+          dexterity: 14,
+          constitution: 15,
+          intelligence: 12,
+          wisdom: 16,
+          charisma: 13
+        };
+
+        const inspectorState = {
+          abilityCustomModifiers: {
+            strength: [
+              { source: 'Level 4 ASI', value: 2 },
+              { source: 'Item', value: 1 }
+            ],
+            dexterity: [
+              { source: 'Feat', value: 1 }
+            ],
+            constitution: []
+          },
+          abilityCustomOverrides: {
+            wisdom: 18
+          }
+        };
+
+        // STR: 18 + 3 = 21, mod = +5
+        const strScore = getFinalAbilityScore('strength', abilities.strength, inspectorState);
+        const strMod = calculateModifier(strScore);
+        expect(strScore).toBe(21);
+        expect(strMod).toBe(5);
+
+        // DEX: 14 + 1 = 15, mod = +2
+        const dexScore = getFinalAbilityScore('dexterity', abilities.dexterity, inspectorState);
+        const dexMod = calculateModifier(dexScore);
+        expect(dexScore).toBe(15);
+        expect(dexMod).toBe(2);
+
+        // CON: 15, mod = +2 (no modifiers)
+        const conScore = getFinalAbilityScore('constitution', abilities.constitution, inspectorState);
+        const conMod = calculateModifier(conScore);
+        expect(conScore).toBe(15);
+        expect(conMod).toBe(2);
+
+        // WIS: override to 18, mod = +4 (ignoring base 16)
+        const wisScore = getFinalAbilityScore('wisdom', abilities.wisdom, inspectorState);
+        const wisMod = calculateModifier(wisScore);
+        expect(wisScore).toBe(18);
+        expect(wisMod).toBe(4);
+      });
+
+      it('should correctly handle clearing modifiers (18 +2 -> no modifiers = 18)', () => {
+        const baseScore = 18;
+        
+        // With modifier
+        const withModifier = {
+          abilityCustomModifiers: {
+            strength: [{ source: 'Buff', value: 2 }]
+          },
+          abilityCustomOverrides: {}
+        };
+        const scoreWithMod = getFinalAbilityScore('strength', baseScore, withModifier);
+        const modWithMod = calculateModifier(scoreWithMod);
+        expect(scoreWithMod).toBe(20);
+        expect(modWithMod).toBe(5);
+
+        // After clearing modifier
+        const withoutModifier = {
+          abilityCustomModifiers: {},
+          abilityCustomOverrides: {}
+        };
+        const scoreWithoutMod = getFinalAbilityScore('strength', baseScore, withoutModifier);
+        const modWithoutMod = calculateModifier(scoreWithoutMod);
+        expect(scoreWithoutMod).toBe(18);
+        expect(modWithoutMod).toBe(4);
+      });
+    });
+  });
 });

@@ -308,6 +308,50 @@ Pure combat feat:
 
 ---
 
+## Character Features Table
+
+### `benefits` (JSONB, nullable)
+
+Structured benefits for class/species/background features. This mirrors the benefits format used in the character sheet spec.
+
+```typescript
+Array<
+  | { type: 'skill_proficiency'; skill: string; alternate_skill?: boolean }
+  | { type: 'skill_dual_ability'; skills: string[]; ability: string }
+  | { type: 'skill_half_proficiency' }
+  | { type: 'skill_modifier_bonus'; skills: string[]; bonus_source: string }
+  | { type: 'saving_throw_bonus'; ability: string; bonus_source: string }
+  | { type: 'ability_check_bonus'; ability: string; bonus_source: string }
+  | { type: 'passive_bonus'; passive_name: string; bonus: number }
+  | { type: 'bonus_action'; name: string; range?: string; target?: string }
+  | { type: 'feature_die'; name: string; die: string; scaling?: Record<string, string> }
+>;
+```
+
+**Example (Bardic Inspiration):**
+```json
+[
+  {
+    "type": "bonus_action",
+    "name": "Bardic Inspiration",
+    "range": "60 ft",
+    "target": "creature that can see or hear you"
+  },
+  {
+    "type": "feature_die",
+    "name": "Bardic Inspiration",
+    "die": "d6",
+    "scaling": {
+      "5": "d8",
+      "10": "d10",
+      "15": "d12"
+    }
+  }
+]
+```
+
+---
+
 ## Character Feats Table
 
 ### `choices` (JSONB, nullable)

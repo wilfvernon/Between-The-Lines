@@ -24,6 +24,7 @@ export default function CharacterImporter({
   const [asiForm, setAsiForm] = useState(null);
   const [availableUsers, setAvailableUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [featuresReview, setFeaturesReview] = useState([]);
 
   const formatFailName = (fail) => {
     if (typeof fail?.name === 'string') return fail.name;
@@ -311,6 +312,9 @@ export default function CharacterImporter({
 
       // Transform to our schema
       const transformed = transformDnDBeyondCharacter(dndBeyondJson, 'temp-user-id');
+      // Initialize features with approval state
+      const featuresWithApproval = transformed.features.map(f => ({ ...f, approved: false }));
+      setFeaturesReview(featuresWithApproval);
       setCharacterData(transformed);
 
       const prepared = await prepareReferenceImports(transformed);
@@ -452,10 +456,21 @@ export default function CharacterImporter({
         }
       }
 
-      if (characterData.features.length > 0) {
-        const featuresWithCharId = characterData.features.map(f => ({ ...f, character_id: characterId }));
-        const { error } = await supabase.from('character_features').insert(featuresWithCharId);
-        if (error) throw error;
+      if (featuresReview.length > 0) {
+        // Only insert approved features
+        const approvedFeatures = featuresReview.filter(f => f.approved);
+        if (approvedFeatures.length > 0) {
+          const featuresWithCharId = approvedFeatures.map(f => {
+            // Remove the approved flag before inserting
+            const { approved, ...featureData } = f;
+            return { ...featureData, character_id: characterId };
+          });
+          const { error } = await supabase.from('character_features').insert(featuresWithCharId);
+          if (error) throw error;
+          console.log(`[Character Import] Inserted ${approvedFeatures.length} approved features`);
+        } else {
+          console.log(`[Character Import] No features approved for import`);
+        }
       }
 
       if (characterData.feats.length > 0) {
@@ -553,6 +568,7 @@ export default function CharacterImporter({
       setStatus(`✅ Character "${characterData.character.name}" saved successfully!`);
       setCharacterData(null);
       setReviewData(null);
+      setFeaturesReview([]);
       setJsonInput('');
       setStep('url');
       onReviewPendingChange?.(false);
@@ -1144,6 +1160,140 @@ export default function CharacterImporter({
               </div>
             )}
 
+            {/* Features Management */}
+            <div style={{ marginBottom: '24px', padding: '12px', background: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
+              <h4 style={{ marginTop: 0 }}>Features ({featuresReview.filter(f => f.approved).length}/{featuresReview.length} approved)</h4>
+              <p style={{ fontSize: '13px', color: '#666', marginBottom: '12px' }}>
+                Review all features and approve the ones that should be imported. Reject any bad data.
+              </p>
+              
+              {featuresReview.length > 0 ? (
+                <>
+                  {featuresReview.map((feature, index) => (
+                    <div key={index} style={{
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: feature.approved ? '#e8f5e9' : '#fff',
+                      borderRadius: '4px',
+                      border: `1px solid ${feature.approved ? '#4CAF50' : '#e0e0e0'}`
+                    }}>
+                      <div style={{ marginBottom: '8px' }}>
+                        <strong style={{ fontSize: '15px' }}>{feature.name}</strong>
+                        <span style={{ 
+                          marginLeft: '10px', 
+                          fontSize: '12px', 
+                          padding: '2px 8px', 
+                          background: '#e3f2fd', 
+                          borderRadius: '3px',
+                          color: '#1976d2'
+                        }}>
+                          {feature.source}
+                        </span>
+                      </div>
+                      
+                      {feature.description && (
+                        <div style={{ 
+                          fontSize: '13px', 
+                          color: '#555', 
+                          marginBottom: '8px',
+                          maxHeight: '80px',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}>
+                          {feature.description.slice(0, 200)}{feature.description.length > 200 ? '...' : ''}
+                        </div>
+                      )}
+                      
+                      <div style={{ display: 'flex', gap: '4px', fontSize: '12px', color: '#666', marginBottom: '8px' }}>
+                        {feature.max_uses && (
+                          <span style={{ background: '#f5f5f5', padding: '2px 6px', borderRadius: '3px' }}>
+                            Uses: {feature.max_uses}{feature.reset_on && ` / ${feature.reset_on}`}
+                          </span>
+                        )}
+                      </div>
+                      
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => {
+                            const updated = [...featuresReview];
+                            updated[index] = { ...updated[index], approved: true };
+                            setFeaturesReview(updated);
+                          }}
+                          disabled={feature.approved}
+                          style={{
+                            padding: '6px 12px',
+                            background: feature.approved ? '#81c784' : '#4CAF50',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: feature.approved ? 'default' : 'pointer',
+                            fontSize: '12px'
+                          }}
+                        >
+                          {feature.approved ? '✓ Approved' : 'Approve'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            // Remove this feature from the review list
+                            const updated = featuresReview.filter((_, i) => i !== index);
+                            setFeaturesReview(updated);
+                          }}
+                          style={{
+                            padding: '6px 12px',
+                            background: '#f44336',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '12px'
+                          }}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => {
+                        const updated = featuresReview.map(f => ({ ...f, approved: true }));
+                        setFeaturesReview(updated);
+                      }}
+                      style={{
+                        padding: '8px 16px',
+                        background: '#4CAF50',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px'
+                      }}
+                    >
+                      ✓ Approve All
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFeaturesReview([]);
+                      }}
+                      style={{
+                        padding: '8px 16px',
+                        background: '#f44336',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px'
+                      }}
+                    >
+                      ✕ Reject All
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p style={{ color: '#999', fontStyle: 'italic' }}>No features to review.</p>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: '12px' }}>
               <button
                 onClick={handleConfirmCharacterReview}
@@ -1271,6 +1421,7 @@ export default function CharacterImporter({
             onClick={() => {
               setCharacterData(null);
               setReviewData(null);
+              setFeaturesReview([]);
               setJsonInput('');
               setStep('url');
               setStatus('');

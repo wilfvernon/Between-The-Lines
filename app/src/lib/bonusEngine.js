@@ -1,3 +1,21 @@
+/**
+ * BONUS ENGINE - Core Architecture
+ * 
+ * This file handles ALL bonus collection and derivation.
+ * Output: derivedStats with FINAL ability scores and modifiers including ALL bonuses.
+ * 
+ * Modules consuming this:
+ *   - CharacterSheet.jsx uses derivedStats for ALL displays (skills, saves, AC, etc.)
+ *   - SkillsTab, AbilitiesTab, etc. ALWAYS use derived modifiers
+ *   - Never use character.strength/dexterity/etc. for display - use derivedStats.derived.modifiers
+ * 
+ * Bonus sources:
+ *   - Features with benefits (e.g., "Scholar of Yore" +CHA to History)
+ *   - Magic items with bonuses
+ *   - Ability Score Improvements (ASIs)
+ *   - Manual overrides
+ */
+
 const abilityOrder = [
   'strength',
   'dexterity',
@@ -36,7 +54,171 @@ const normalizeBonus = (bonus, source) => {
   };
 };
 
-export const collectBonuses = ({ items = [], features = [], overrides = [] } = {}) => {
+/**
+ * Resolve a modifier reference to a numeric value
+ * e.g., "charisma_modifier", "proficiency_bonus", "wisdom_modifier_doubled"
+ */
+const resolveModifierValue = (modifierString, baseCharacterData = {}) => {
+  if (!modifierString || typeof modifierString !== 'string') return 0;
+
+  // Handle proficiency bonus reference
+  if (modifierString === 'proficiency_bonus') {
+    return baseCharacterData.proficiency || 2;
+  }
+
+  // Handle ability modifier references like "charisma_modifier", "wisdom_modifier"
+  const modifierMatch = modifierString.match(/^(\w+)_modifier(?:_(\w+))?$/);
+  if (modifierMatch) {
+    const ability = modifierMatch[1];
+    const modifier = modifierMatch[2]; // e.g., "doubled", "halved"
+    
+    const abilityScore = baseCharacterData[ability] || 10;
+    let value = abilityModifier(abilityScore);
+
+    if (modifier === 'doubled') value *= 2;
+    if (modifier === 'halved') value = Math.floor(value / 2);
+
+    return value;
+  }
+
+  return 0;
+};
+
+/**
+ * Handler registry for converting benefit structures to bonuses
+ * Each handler returns an array of bonus objects or empty array
+ */
+const benefitHandlers = {
+  /**
+   * skill_modifier_bonus: Adds a modifier bonus to skill checks
+   * Structure: { type: "skill_modifier_bonus", skills: ["skill1", "skill2"], bonus_source: "charisma_modifier" }
+   */
+  skill_modifier_bonus: (benefit, baseCharacterData = {}, source) => {
+    if (!Array.isArray(benefit.skills) || !benefit.bonus_source) return [];
+    
+    const value = resolveModifierValue(benefit.bonus_source, baseCharacterData);
+    if (value === 0) return [];
+
+    return benefit.skills.map(skill => ({
+      target: `skill.${skill}`,
+      value,
+      type: 'untyped',
+      source
+    }));
+  },
+
+  /**
+   * ability_modifier_bonus: Adds a modifier bonus to ability checks
+   * Structure: { type: "ability_modifier_bonus", abilities: ["wisdom", "charisma"], bonus_source: "proficiency_bonus" }
+   */
+  ability_modifier_bonus: (benefit, baseCharacterData = {}, source) => {
+    if (!Array.isArray(benefit.abilities) || !benefit.bonus_source) return [];
+
+    const value = resolveModifierValue(benefit.bonus_source, baseCharacterData);
+    if (value === 0) return [];
+
+    return benefit.abilities.map(ability => ({
+      target: `ability.${ability}`,
+      value,
+      type: 'untyped',
+      source
+    }));
+  },
+
+  /**
+   * save_modifier_bonus: Adds a modifier bonus to saving throws
+   * Structure: { type: "save_modifier_bonus", saves: ["wisdom", "dexterity"], bonus_source: "charisma_modifier" }
+   */
+  save_modifier_bonus: (benefit, baseCharacterData = {}, source) => {
+    if (!Array.isArray(benefit.saves) || !benefit.bonus_source) return [];
+
+    const value = resolveModifierValue(benefit.bonus_source, baseCharacterData);
+    if (value === 0) return [];
+
+    return benefit.saves.map(save => ({
+      target: `save.${save}`,
+      value,
+      type: 'untyped',
+      source
+    }));
+  },
+
+  /**
+   * skill_proficiency: Grants proficiency in a skill
+   * Currently tracked via features/proficiencies, not bonuses
+   * Marked for future implementation in character sheet
+   */
+  skill_proficiency: (benefit, baseCharacterData = {}, source) => {
+    // Proficiencies are handled separately, not as numeric bonuses
+    // This is here as documentation for future proficiency tracking
+    return [];
+  },
+
+  /**
+   * skill_dual_ability: Adds an additional ability modifier to a skill
+   * Example: Scholar of Yore adds CHA to History and Religion
+   * Handled directly by SkillsTab via dynamic calculation, not as numeric bonuses
+   */
+  skill_dual_ability: (benefit, baseCharacterData = {}, source) => {
+    // Dual ability calculations are handled in SkillsTab UI layer
+    // This is here so collectBonuses doesn't warn about unknown types
+    return [];
+  },
+
+  /**
+   * skill_half_proficiency: Add half proficiency bonus to unproficient skills
+   * Example: Jack of All Trades grants half PB to skills you lack proficiency in
+   * Handled directly by SkillsTab via dynamic calculation, not as numeric bonuses
+   */
+  skill_half_proficiency: (benefit, baseCharacterData = {}, source) => {
+    // Half proficiency calculations are handled in SkillsTab UI layer
+    // This is here so collectBonuses doesn't warn about unknown types
+    return [];
+  },
+
+  /**
+   * ac_bonus: Flat bonus to armor class
+   * Structure: { type: "ac_bonus", value: 2 }
+   */
+  ac_bonus: (benefit, baseCharacterData = {}, source) => {
+    if (typeof benefit.value !== 'number') return [];
+    return [{
+      target: 'ac',
+      value: benefit.value,
+      type: benefit.bonus_type || 'untyped',
+      source
+    }];
+  }
+};
+
+/**
+ * Convert a single benefit object to bonus objects
+ * Returns an array of bonuses (may be empty if handler doesn't apply)
+ */
+const convertBenefitToBonus = (benefit, baseCharacterData = {}, source) => {
+  if (!benefit || typeof benefit !== 'object' || !benefit.type) return [];
+  
+  const handler = benefitHandlers[benefit.type];
+  if (!handler) {
+    console.warn(`[bonusEngine] Unknown benefit type: ${benefit.type}`);
+    return [];
+  }
+
+  return handler(benefit, baseCharacterData, source);
+};
+
+/**
+ * Process an array of benefits and convert to bonuses
+ */
+const processBenefits = (benefits, baseCharacterData = {}, source) => {
+  if (!Array.isArray(benefits)) return [];
+  
+  return benefits.flatMap(benefit => 
+    convertBenefitToBonus(benefit, baseCharacterData, source)
+  );
+};
+
+export const collectBonuses = ({ items = [], features = [], baseCharacterData = {}, overrides = [] } = {}) => {
   const collected = [];
 
   const pushBonus = (bonus, source) => {
@@ -53,10 +235,17 @@ export const collectBonuses = ({ items = [], features = [], overrides = [] } = {
         label: entry.name || entry.label || entry.title || 'Unknown'
       };
 
+      // Collect traditional bonuses (for backward compatibility)
       if (Array.isArray(entry.bonuses)) {
         entry.bonuses.forEach((bonus) => pushBonus(bonus, source));
       } else if (entry.bonus) {
         pushBonus(entry.bonus, source);
+      }
+
+      // Process benefits (new structured format)
+      if (Array.isArray(entry.benefits)) {
+        const benefitBonuses = processBenefits(entry.benefits, baseCharacterData, source);
+        benefitBonuses.forEach(bonus => pushBonus(bonus, source));
       }
     });
   };
@@ -214,3 +403,13 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     sources
   };
 };
+
+/**
+ * Export benefit handlers for extension and testing
+ * Add new benefit types by assigning to this registry
+ */
+export const registerBenefitHandler = (type, handler) => {
+  benefitHandlers[type] = handler;
+};
+
+export const getBenefitHandlers = () => benefitHandlers;
