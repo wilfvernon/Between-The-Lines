@@ -4,14 +4,14 @@ import { useNavigate } from 'react-router-dom';
 import './Login.css';
 
 const spellSchools = [
-  { code: 'CON', name: 'Conjuration', src: '/school-symbols/symbol-5.png' },
-  { code: 'ENC', name: 'Enchantment', src: '/school-symbols/symbol-2.png' },
-  { code: 'NEC', name: 'Necromancy', src: '/school-symbols/symbol-6.png' },
-  { code: 'DIV', name: 'Divination', src: '/school-symbols/symbol-4.png' },
-  { code: 'EVO', name: 'Evocation', src: '/school-symbols/symbol-1.png' },
-  { code: 'ILL', name: 'Illusion', src: '/school-symbols/symbol-3.png' },
-  { code: 'ABJ', name: 'Abjuration', src: '/school-symbols/symbol-7.png' },
-  { code: 'TRN', name: 'Transmutation', src: '/school-symbols/symbol-8.png' },
+  { code: 'CON', name: 'Conjuration', src: '/school-symbols/conjuration.png' },
+  { code: 'ENC', name: 'Enchantment', src: '/school-symbols/enchantment.png' },
+  { code: 'NEC', name: 'Necromancy', src: '/school-symbols/necromancy.png' },
+  { code: 'DIV', name: 'Divination', src: '/school-symbols/divination.png' },
+  { code: 'EVO', name: 'Evocation', src: '/school-symbols/evocation.png' },
+  { code: 'ILL', name: 'Illusion', src: '/school-symbols/illusion.png' },
+  { code: 'ABJ', name: 'Abjuration', src: '/school-symbols/abjuration.png' },
+  { code: 'TRN', name: 'Transmutation', src: '/school-symbols/transmutation.png' },
 ];
 
 function Login() {
