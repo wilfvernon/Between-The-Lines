@@ -17,6 +17,15 @@ build/
 *.png
 *.jpg
 *.jpeg
+
+# Keep public deployment assets trackable for web hosting
+!app/public/**/*.png
+!app/public/**/*.jpg
+!app/public/**/*.jpeg
+
+# Still ignore local texture backup dump
+app/public/textures-backup-*/
+app/public/textures-backup-*/**
 .env
 .env.local
 .env.development.local
