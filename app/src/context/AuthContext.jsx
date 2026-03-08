@@ -35,11 +35,30 @@ export const AuthProvider = ({ children }) => {
   };
 
   useEffect(() => {
-    // Check active sessions
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    let isMounted = true;
+
+    const initializeSession = async () => {
+      try {
+        // Check active sessions, but never allow bootstrap to leave loading stuck.
+        const { data: { session }, error } = await runAuthWithRetry(() => supabase.auth.getSession());
+        if (error) throw error;
+
+        if (isMounted) {
+          setUser(session?.user ?? null);
+        }
+      } catch (error) {
+        console.error('Error initializing auth session:', error);
+        if (isMounted) {
+          setUser(null);
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    initializeSession();
 
     // Listen for auth changes
     const {
@@ -49,7 +68,10 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signIn = async (email, password) => {

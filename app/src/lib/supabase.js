@@ -20,5 +20,6 @@ const inTabAuthLock = async (_lockName, _acquireTimeout, fn) => {
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     lock: inTabAuthLock,
+    lockAcquireTimeout: 10000,
   },
 });
