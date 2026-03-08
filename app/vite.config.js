@@ -16,8 +16,8 @@ export default defineConfig({
         name: 'Between the Lines',
         short_name: 'BTL',
         description: 'D&D Campaign Manager',
-        theme_color: '#8b5a3c',
-        background_color: '#f6f3ee',
+        theme_color: '#1a0a10',
+        background_color: '#1a0a10',
         display: 'standalone',
         icons: [
           {

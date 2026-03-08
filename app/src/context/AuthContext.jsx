@@ -17,6 +17,23 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const isLockTimeoutError = (error) => {
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('lockmanager lock timed out') || message.includes('navigator lock');
+  };
+
+  const runAuthWithRetry = async (operation) => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isLockTimeoutError(error)) throw error;
+
+      // Give any in-flight auth operation a moment to settle, then retry once.
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      return operation();
+    }
+  };
+
   useEffect(() => {
     // Check active sessions
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -36,16 +53,22 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const signIn = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { data, error } = await runAuthWithRetry(() =>
+      supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+    );
+
     if (error) throw error;
     return data;
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
+    const { error } = await runAuthWithRetry(() =>
+      supabase.auth.signOut({ scope: 'local' })
+    );
+
     if (error) throw error;
   };
 
