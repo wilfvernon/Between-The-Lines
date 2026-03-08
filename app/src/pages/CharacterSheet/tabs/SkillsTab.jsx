@@ -288,9 +288,9 @@ export default function SkillsTab({ character, proficiencyBonus, skills: charact
               ? `${skill.ability}+${abilitySuffixes.join('+')}`
               : skill.ability;
             
-            const proficiencyIconSrc = new URL(`../../../assets/icons/proficiency/${proficiencyLevel.icon}`, import.meta.url).href;
-            const skillIconSrc = new URL(`../../../assets/icons/skill/${skillSlug(skill.name)}.svg`, import.meta.url).href;
-            const advantageIconSrc = new URL(`../../../assets/icons/dice/advantage.svg`, import.meta.url).href;
+            const proficiencyIconSrc = `/icons/proficiency/${proficiencyLevel.icon}`;
+            const skillIconSrc = `/icons/skill/${skillSlug(skill.name)}.svg`;
+            const advantageIconSrc = '/icons/dice/advantage.svg';
             const hasAdvantage = !!skillAdvantages[skillKey];
             
             return (

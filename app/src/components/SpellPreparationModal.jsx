@@ -298,7 +298,7 @@ function SpellPreparationModal({
     }
   };
 
-  const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
+  const crossIconSrc = '/icons/util/cross.svg';
   const prepHeaderTitle = className === 'Wizard' ? 'Spellbook' 
     : className === 'Bard' ? 'Storybook'
     : className === 'Druid' || className === 'Ranger' ? 'Primal Spells'

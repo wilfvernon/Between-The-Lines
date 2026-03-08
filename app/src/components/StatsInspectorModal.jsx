@@ -7,7 +7,7 @@ import './StatsInspectorModal.css';
  * should wrap this component and provide their own content.
  */
 function StatsInspectorModal({ isOpen, onClose, title, children, footer }) {
-  const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
+  const crossIconSrc = '/icons/util/cross.svg';
 
   if (!isOpen) return null;
 

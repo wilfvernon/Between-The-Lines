@@ -18,7 +18,7 @@ function SpellDetailModal({ spell, isOpen, onClose, spellAttackBonus, spellSaveD
 
   if (!spell || !isOpen) return null;
 
-  const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
+  const crossIconSrc = '/icons/util/cross.svg';
 
   const getDamageTypeIcon = (effectType) => {
     if (!effectType) return null;

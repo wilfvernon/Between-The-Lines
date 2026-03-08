@@ -148,7 +148,7 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
             const flatSaveBonus = statsTotals.saves?.[ability.key] || 0;
             const saveBonus = baseSaveBonus + flatSaveBonus;
             const hasAdvantage = !!saveAdvantages[ability.key];
-            const advantageIconSrc = new URL(`../../../assets/icons/dice/advantage.svg`, import.meta.url).href;
+            const advantageIconSrc = '/icons/dice/advantage.svg';
             
             return (
               <div key={ability.abbr} className="save-item">

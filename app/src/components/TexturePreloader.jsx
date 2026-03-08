@@ -34,10 +34,10 @@ export default function TexturePreloader() {
       <div style={{ backgroundImage: 'url(/Healing.png)', width: 1, height: 1 }} />
       
       {/* SVG masks for tab icons - force browser to cache */}
-      <img src="/src/assets/sword.svg" alt="" style={{ width: 1, height: 1 }} />
-      <img src="/src/assets/icons/entity/pack.svg" alt="" style={{ width: 1, height: 1 }} />
-      <img src="/src/assets/icons/entity/book.svg" alt="" style={{ width: 1, height: 1 }} />
-      <img src="/src/assets/icons/monster/dragon.svg" alt="" style={{ width: 1, height: 1 }} />
+      <img src="/icons/sword.svg" alt="" style={{ width: 1, height: 1 }} />
+      <img src="/icons/entity/pack.svg" alt="" style={{ width: 1, height: 1 }} />
+      <img src="/icons/entity/book.svg" alt="" style={{ width: 1, height: 1 }} />
+      <img src="/icons/monster/dragon.svg" alt="" style={{ width: 1, height: 1 }} />
     </div>
   );
 }

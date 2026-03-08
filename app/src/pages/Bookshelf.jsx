@@ -354,7 +354,7 @@ function BookshelfCarousel({ title, books, onBookOpen }) {
 }
 
 function Bookshelf() {
-  const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
+  const crossIconSrc = '/icons/util/cross.svg';
   const [books, setBooks] = useState([]);
   const [activeBookId, setActiveBookId] = useState('');
   const [chapters, setChapters] = useState([]);

@@ -133,7 +133,7 @@ function LearnSpellModal({
     }
   };
 
-  const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
+  const crossIconSrc = '/icons/util/cross.svg';
   const spellIconSrc = new URL('../assets/icons/game/spell.svg', import.meta.url).href;
 
   if (!isOpen || !character) return null;

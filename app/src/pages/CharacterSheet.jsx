@@ -1794,7 +1794,7 @@ function CharacterSheet() {
         <div className="item-modal-overlay" onClick={() => { setShowNewPocketModal(false); setNewPocketName(''); setNewPocketItemId(null); }}>
           <div className="new-pocket-modal" onClick={(e) => e.stopPropagation()}>
             <button className="item-modal-close" onClick={() => { setShowNewPocketModal(false); setNewPocketName(''); setNewPocketItemId(null); }} aria-label="Close">
-              <span className="icon-cross" style={{ '--icon-url': `url(${new URL('../assets/icons/util/cross.svg', import.meta.url).href})` }} aria-hidden="true" />
+              <span className="icon-cross" style={{ '--icon-url': 'url(/icons/util/cross.svg)' }} aria-hidden="true" />
             </button>
             <h3>Create New Pocket</h3>
             <p>Enter a name for your custom inventory pocket:</p>
@@ -2560,7 +2560,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
   
   if (!isOpen || !item) return null;
 
-  const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
+  const crossIconSrc = '/icons/util/cross.svg';
   const isEquipment = !!item.equipment;
   const isMagicItem = !!item.magic_item;
   const isTrinket = !isEquipment && !isMagicItem && !!item.trinket_name;
@@ -3981,7 +3981,7 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
 // HP Edit Modal
 function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier, setMaxHPModifier, maxHP, damageInput, setDamageInput, isOpen, onClose }) {
   const displayMaxHP = maxHP + maxHPModifier;
-  const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
+  const crossIconSrc = '/icons/util/cross.svg';
 
   // Check if input is a valid positive integer
   const parsedAmount = parseInt(damageInput);
