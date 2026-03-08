@@ -4,6 +4,8 @@ import SpellManagement from '../components/SpellManagement';
 import MagicItemManagement from '../components/MagicItemManagement';
 import FeatManagement from '../components/FeatManagement';
 import CharacterImporter from '../components/CharacterImporter';
+import CharacterManagement from '../components/CharacterManagement';
+import MonsterStatblockManagement from '../components/MonsterStatblockManagement';
 import './AdminDashboard.css';
 
 const sortBooks = (items) => [...items].sort((left, right) => left.title.localeCompare(right.title));
@@ -15,7 +17,7 @@ const formatTags = (tags) => (Array.isArray(tags) ? tags.join(', ') : '');
 
 function AdminDashboard() {
   const [mainTab, setMainTab] = useState('books'); // 'books' or 'dnd'
-  const [dndTab, setDndTab] = useState('spells'); // 'spells', 'items', 'feats', 'characters'
+  const [dndTab, setDndTab] = useState('spells'); // 'spells', 'items', 'feats', 'characters', 'character-management', 'statblocks'
   const [booksSubTab, setBooksSubTab] = useState('manage'); // 'manage' | 'config'
 
   const [spellPrefill, setSpellPrefill] = useState(null);
@@ -975,6 +977,38 @@ function AdminDashboard() {
             >
               👤 Characters
             </button>
+
+            <button
+              onClick={() => setDndTab('character-management')}
+              style={{
+                padding: '10px 20px',
+                background: dndTab === 'character-management' ? '#2196F3' : 'transparent',
+                color: dndTab === 'character-management' ? 'white' : '#666',
+                border: 'none',
+                borderBottom: dndTab === 'character-management' ? '2px solid #2196F3' : 'none',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: dndTab === 'character-management' ? 'bold' : 'normal'
+              }}
+            >
+              🧭 Character Management
+            </button>
+
+            <button
+              onClick={() => setDndTab('statblocks')}
+              style={{
+                padding: '10px 20px',
+                background: dndTab === 'statblocks' ? '#2196F3' : 'transparent',
+                color: dndTab === 'statblocks' ? 'white' : '#666',
+                border: 'none',
+                borderBottom: dndTab === 'statblocks' ? '2px solid #2196F3' : 'none',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: dndTab === 'statblocks' ? 'bold' : 'normal'
+              }}
+            >
+              🐉 Stat Blocks
+            </button>
           </div>
 
           {/* D&D Content Based on Sub-Tab */}
@@ -1005,6 +1039,8 @@ function AdminDashboard() {
                 reviewOpenNonce={reviewOpenNonce}
               />
             </div>
+            {dndTab === 'character-management' && <CharacterManagement />}
+            {dndTab === 'statblocks' && <MonsterStatblockManagement />}
           </div>
         </div>
       )}

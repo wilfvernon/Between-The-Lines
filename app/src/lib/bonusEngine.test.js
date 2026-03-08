@@ -58,6 +58,88 @@ describe('bonusEngine', () => {
       });
       expect(bonuses[0].source.type).toBe('override');
     });
+
+    it('should collect initiative_bonus from feature benefits array', () => {
+      const features = [
+        {
+          id: 'feat-1',
+          name: 'Alert Instinct',
+          benefits: [
+            { type: 'initiative_bonus', bonus: 'proficiency' }
+          ]
+        }
+      ];
+
+      const bonuses = collectBonuses({
+        items: [],
+        features,
+        baseCharacterData: { proficiency: 3 },
+        overrides: []
+      });
+
+      expect(bonuses.length).toBe(1);
+      expect(bonuses[0]).toMatchObject({
+        target: 'initiative',
+        value: 3
+      });
+    });
+
+    it('should collect initiative_bonus from single-object benefits shape', () => {
+      const features = [
+        {
+          id: 'feat-2',
+          name: 'Aura of Readiness',
+          benefits: { type: 'initiative_bonus', bonus: 'Proficiency' }
+        }
+      ];
+
+      const bonuses = collectBonuses({
+        items: [],
+        features,
+        baseCharacterData: { proficiency: 4 },
+        overrides: []
+      });
+
+      expect(bonuses.length).toBe(1);
+      expect(bonuses[0]).toMatchObject({
+        target: 'initiative',
+        value: 4
+      });
+    });
+
+    it('should collect ac_override with normalized mods and shield allowance', () => {
+      const features = [
+        {
+          id: 'feat-3',
+          name: 'Armoured Piscene',
+          benefits: {
+            type: 'ac_override',
+            base: 13,
+            mods: ['CON'],
+            shields_allowed: true
+          }
+        }
+      ];
+
+      const bonuses = collectBonuses({
+        items: [],
+        features,
+        baseCharacterData: {
+          constitution: 16,
+          shield_bonus: 2
+        },
+        overrides: []
+      });
+
+      expect(bonuses.length).toBe(1);
+      expect(bonuses[0]).toMatchObject({
+        target: 'ac_override',
+        value: 13,
+        mods: ['constitution'],
+        shieldsAllowed: true,
+        shieldBonus: 2
+      });
+    });
   });
 
   describe('deriveCharacterStats', () => {
@@ -98,6 +180,29 @@ describe('bonusEngine', () => {
       const { derived } = deriveCharacterStats({ base: baseStats, bonuses });
 
       expect(derived.ac).toBe(14); // 12 base + 2 bonus
+    });
+
+    it('should apply ac_override formula with shield and still stack ac bonuses', () => {
+      const bonuses = [
+        {
+          target: 'ac_override',
+          value: 13,
+          mods: ['constitution'],
+          shieldsAllowed: true,
+          shieldBonus: 2,
+          source: { label: 'Armoured Piscene' }
+        },
+        {
+          target: 'ac',
+          value: 1,
+          source: { label: 'Ring of Protection' }
+        }
+      ];
+
+      const { derived } = deriveCharacterStats({ base: baseStats, bonuses });
+
+      // 13 + CON mod(2) + shield(2) + ac bonus(1)
+      expect(derived.ac).toBe(18);
     });
 
     it('should apply maxHP bonuses', () => {
@@ -214,6 +319,160 @@ describe('bonusEngine', () => {
       const { derived } = deriveCharacterStats({ base: baseStats, bonuses });
 
       expect(derived.passivePerception).toBe(16); // 11 base + 5 bonus
+    });
+  });
+
+  describe('skill_bonus benefit type', () => {
+    it('should add flat bonuses to specific skills', () => {
+      const feature = {
+        id: 'test-feature',
+        name: 'Test Feature',
+        benefits: [
+          {
+            type: 'skill_bonus',
+            skills: ['perception', 'insight'],
+            amount: 2
+          }
+        ]
+      };
+
+      const bonuses = collectBonuses({ features: [feature] });
+
+      expect(bonuses.length).toBe(2);
+      
+      const perceptionBonus = bonuses.find(b => b.target === 'skill.perception');
+      expect(perceptionBonus).toBeDefined();
+      expect(perceptionBonus.value).toBe(2);
+      expect(perceptionBonus.type).toBe('untyped');
+      expect(perceptionBonus.source.label).toBe('Test Feature');
+
+      const insightBonus = bonuses.find(b => b.target === 'skill.insight');
+      expect(insightBonus).toBeDefined();
+      expect(insightBonus.value).toBe(2);
+    });
+
+    it('should expand "all" to all 18 skills', () => {
+      const feature = {
+        id: 'jack-of-all-trades',
+        name: 'Jack of All Trades',
+        benefits: [
+          {
+            type: 'skill_bonus',
+            skills: ['all'],
+            amount: 1
+          }
+        ]
+      };
+
+      const bonuses = collectBonuses({ features: [feature] });
+
+      // Should have 18 bonuses (one for each skill)
+      expect(bonuses.length).toBe(18);
+      expect(bonuses.every(b => b.value === 1)).toBe(true);
+      expect(bonuses.every(b => b.target.startsWith('skill.'))).toBe(true);
+      
+      // Verify some specific skills
+      expect(bonuses.find(b => b.target === 'skill.perception')).toBeDefined();
+      expect(bonuses.find(b => b.target === 'skill.stealth')).toBeDefined();
+      expect(bonuses.find(b => b.target === 'skill.arcana')).toBeDefined();
+      expect(bonuses.find(b => b.target === 'skill.athletics')).toBeDefined();
+    });
+
+    it('should respect bonus_type if provided', () => {
+      const feature = {
+        id: 'test',
+        name: 'Test',
+        benefits: [
+          {
+            type: 'skill_bonus',
+            skills: ['stealth'],
+            amount: 3,
+            bonus_type: 'circumstance'
+          }
+        ]
+      };
+
+      const bonuses = collectBonuses({ features: [feature] });
+
+      expect(bonuses[0].type).toBe('circumstance');
+    });
+  });
+
+  describe('save_bonus benefit type', () => {
+    it('should add flat bonuses to specific saves', () => {
+      const feature = {
+        id: 'test-feature',
+        name: 'Test Feature',
+        benefits: [
+          {
+            type: 'save_bonus',
+            abilities: ['wisdom', 'charisma'],
+            amount: 2
+          }
+        ]
+      };
+
+      const bonuses = collectBonuses({ features: [feature] });
+
+      expect(bonuses.length).toBe(2);
+      
+      const wisdomBonus = bonuses.find(b => b.target === 'save.wisdom');
+      expect(wisdomBonus).toBeDefined();
+      expect(wisdomBonus.value).toBe(2);
+      expect(wisdomBonus.type).toBe('untyped');
+      expect(wisdomBonus.source.label).toBe('Test Feature');
+
+      const charismaBonus = bonuses.find(b => b.target === 'save.charisma');
+      expect(charismaBonus).toBeDefined();
+      expect(charismaBonus.value).toBe(2);
+    });
+
+    it('should expand "all" to all 6 ability saves', () => {
+      const feature = {
+        id: 'resilient',
+        name: 'Resilient',
+        benefits: [
+          {
+            type: 'save_bonus',
+            abilities: ['all'],
+            amount: 1
+          }
+        ]
+      };
+
+      const bonuses = collectBonuses({ features: [feature] });
+
+      // Should have 6 bonuses (one for each ability)
+      expect(bonuses.length).toBe(6);
+      expect(bonuses.every(b => b.value === 1)).toBe(true);
+      expect(bonuses.every(b => b.target.startsWith('save.'))).toBe(true);
+      
+      // Verify all abilities
+      expect(bonuses.find(b => b.target === 'save.strength')).toBeDefined();
+      expect(bonuses.find(b => b.target === 'save.dexterity')).toBeDefined();
+      expect(bonuses.find(b => b.target === 'save.constitution')).toBeDefined();
+      expect(bonuses.find(b => b.target === 'save.intelligence')).toBeDefined();
+      expect(bonuses.find(b => b.target === 'save.wisdom')).toBeDefined();
+      expect(bonuses.find(b => b.target === 'save.charisma')).toBeDefined();
+    });
+
+    it('should respect bonus_type if provided', () => {
+      const feature = {
+        id: 'test',
+        name: 'Test',
+        benefits: [
+          {
+            type: 'save_bonus',
+            abilities: ['constitution'],
+            amount: 5,
+            bonus_type: 'enhancement'
+          }
+        ]
+      };
+
+      const bonuses = collectBonuses({ features: [feature] });
+
+      expect(bonuses[0].type).toBe('enhancement');
     });
   });
 });

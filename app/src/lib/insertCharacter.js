@@ -27,8 +27,24 @@ export async function insertCharacter(transformedData) {
         classes: transformedData.character.classes,
         species: transformedData.character.species,
         background: transformedData.character.background,
+        image_url: transformedData.character.imageUrl,
+        alt_image_url: transformedData.character.altImageUrl,
+        bio: transformedData.character.bio,
+        languages: transformedData.character.languages,
+        tools: transformedData.character.tools,
+        instruments: transformedData.character.instruments,
+        occupation: transformedData.character.occupation,
+        age: transformedData.character.age,
+        height: transformedData.character.height,
+        likes: transformedData.character.likes,
+        dislikes: transformedData.character.dislikes,
+        fact: transformedData.character.fact,
+        bravery: transformedData.character.bravery,
+        charm: transformedData.character.charm,
+        kindness: transformedData.character.kindness,
+        knowledge: transformedData.character.knowledge,
+        technique: transformedData.character.technique,
         max_hp: transformedData.character.maxHp,
-        speed: transformedData.character.speed,
         strength: transformedData.character.strength,
         dexterity: transformedData.character.dexterity,
         constitution: transformedData.character.constitution,
@@ -59,7 +75,7 @@ export async function insertCharacter(transformedData) {
         .insert(
           transformedData.skills.map(skill => ({
             character_id: characterId,
-            skill_name: skill.name,
+            skill_name: skill.skill_name,
             expertise: skill.expertise,
           }))
         );
@@ -78,8 +94,9 @@ export async function insertCharacter(transformedData) {
             name: feature.name,
             source: feature.source,
             description: feature.description,
-            max_uses: feature.maxUses,
-            reset_on: feature.resetOn,
+            max_uses: feature.max_uses,
+            reset_on: feature.reset_on,
+            benefits: feature.benefits,
           }))
         );
       if (featuresError) throw new Error(`Features insert failed: ${featuresError.message}`);
@@ -139,34 +156,60 @@ export async function insertCharacter(transformedData) {
     // 5. Insert inventory
     if (transformedData.inventory.length > 0) {
       console.log(`🎒 Inserting ${transformedData.inventory.length} inventory items...`);
+      const inventoryRows = [];
+
+      for (const item of transformedData.inventory) {
+        let magicItemId = null;
+        let equipmentId = null;
+        let trinketName = null;
+
+        if (item.is_magic_item) {
+          const { data: magicItemRecord } = await supabase
+            .from('magic_items')
+            .select('id')
+            .eq('name', item.name)
+            .single();
+
+          if (!magicItemRecord) {
+            console.warn(`  ⚠️ Inventory magic item not found, using trinket: ${item.name}`);
+            trinketName = item.name;
+          } else {
+            magicItemId = magicItemRecord.id;
+          }
+        } else {
+          const { data: equipmentRecord } = await supabase
+            .from('equipment')
+            .select('id')
+            .eq('name', item.name)
+            .single();
+
+          if (!equipmentRecord) {
+            console.warn(`  ⚠️ Inventory equipment not found, using trinket: ${item.name}`);
+            trinketName = item.name;
+          } else {
+            equipmentId = equipmentRecord.id;
+          }
+        }
+
+        inventoryRows.push({
+          character_id: characterId,
+          ...(magicItemId ? { magic_item_id: magicItemId } : {}),
+          ...(equipmentId ? { equipment_id: equipmentId } : {}),
+          ...(trinketName ? { trinket_name: trinketName } : {}),
+          quantity: item.quantity,
+          equipped: item.equipped,
+          attuned: item.attuned,
+          notes: item.notes,
+        });
+      }
+
+      if (inventoryRows.length > 0) {
       const { error: inventoryError } = await supabase
         .from('character_inventory')
-        .insert(
-          transformedData.inventory.map(item => ({
-            character_id: characterId,
-            magic_item_id: item.magicItemId,
-            mundane_item_name: item.mundaneItemName,
-            quantity: item.quantity,
-            equipped: item.equipped,
-            attuned: item.attuned,
-            notes: item.notes,
-          }))
-        );
-      if (inventoryError) throw new Error(`Inventory insert failed: ${inventoryError.message}`);
+        .insert(inventoryRows);
+        if (inventoryError) throw new Error(`Inventory insert failed: ${inventoryError.message}`);
+      }
       console.log('✅ Inventory inserted\n');
-    }
-
-    // 6. Insert currency
-    if (transformedData.currency) {
-      console.log(`💰 Inserting currency...`);
-      const { error: currencyError } = await supabase
-        .from('character_currency')
-        .insert({
-          character_id: characterId,
-          gold: transformedData.currency.gold,
-        });
-      if (currencyError) throw new Error(`Currency insert failed: ${currencyError.message}`);
-      console.log('✅ Currency inserted\n');
     }
 
     // 7. Insert senses

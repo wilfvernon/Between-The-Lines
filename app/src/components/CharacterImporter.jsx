@@ -26,11 +26,48 @@ export default function CharacterImporter({
   const [selectedUserId, setSelectedUserId] = useState('');
   const [featuresReview, setFeaturesReview] = useState([]);
 
+  const parseDelimitedList = (value) => {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (typeof value !== 'string') return [];
+    return value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  };
+
+  const updateCharacterField = (field, value) => {
+    setCharacterData((prev) => {
+      if (!prev?.character) return prev;
+      return {
+        ...prev,
+        character: {
+          ...prev.character,
+          [field]: value
+        }
+      };
+    });
+  };
+
   const formatFailName = (fail) => {
     if (typeof fail?.name === 'string') return fail.name;
     if (typeof fail === 'string') return fail;
     if (fail?.name?.name) return fail.name.name;
     return 'Unknown';
+  };
+
+  const formatFeatureSource = (source) => {
+    if (!source) return 'Unknown source';
+    if (typeof source === 'string') return source;
+    if (typeof source === 'object') {
+      if (source.source && source.class) return `${source.source}: ${source.class}`;
+      if (source.source) return String(source.source);
+      try {
+        return JSON.stringify(source);
+      } catch {
+        return 'Object source';
+      }
+    }
+    return String(source);
   };
 
   const reviewReady = useMemo(() => {
@@ -115,7 +152,9 @@ export default function CharacterImporter({
         rarity: entry.data.rarity || '',
         requires_attunement: entry.data.requires_attunement || '',
         description: entry.data.description || '',
-        properties: entry.data.properties ? JSON.stringify(entry.data.properties, null, 2) : ''
+        benefits: entry.data.benefits
+          ? JSON.stringify(entry.data.benefits, null, 2)
+          : (entry.data.properties ? JSON.stringify(entry.data.properties, null, 2) : '')
       });
     } else if (type === 'feats') {
       setEditForm({
@@ -152,8 +191,8 @@ export default function CharacterImporter({
           higher_levels: editForm.higher_levels || null
         };
       } else if (type === 'items') {
-        const properties = editForm.properties?.trim()
-          ? JSON.parse(editForm.properties)
+        const benefits = editForm.benefits?.trim()
+          ? JSON.parse(editForm.benefits)
           : null;
         updated = {
           name: editForm.name,
@@ -161,7 +200,7 @@ export default function CharacterImporter({
           rarity: editForm.rarity || null,
           requires_attunement: editForm.requires_attunement || null,
           description: editForm.description || '',
-          properties
+          benefits
         };
       } else if (type === 'feats') {
         const benefits = editForm.benefits?.trim()
@@ -313,7 +352,7 @@ export default function CharacterImporter({
       // Transform to our schema
       const transformed = transformDnDBeyondCharacter(dndBeyondJson, 'temp-user-id');
       // Initialize features with approval state
-      const featuresWithApproval = transformed.features.map(f => ({ ...f, approved: false }));
+      const featuresWithApproval = transformed.features.map(f => ({ ...f, approved: true }));
       setFeaturesReview(featuresWithApproval);
       setCharacterData(transformed);
 
@@ -375,6 +414,22 @@ export default function CharacterImporter({
       // Validate user selection
       if (!selectedUserId) throw new Error('Please select a user to assign this character to');
 
+      // Client-side imports run with anon auth and must respect per-user RLS ownership.
+      const {
+        data: { user: currentUser },
+        error: authError
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+      if (!currentUser?.id) {
+        throw new Error('You must be signed in before importing a character');
+      }
+      if (selectedUserId !== currentUser.id) {
+        throw new Error(
+          'Import can only save to your own account with current permissions. Select your own user or use a privileged backend import route for cross-user assignment.'
+        );
+      }
+
       // Update character with selected user ID
       characterData.character.userId = selectedUserId;
 
@@ -389,9 +444,23 @@ export default function CharacterImporter({
         species: char.species,
         background: char.background ?? null,
         image_url: char.imageUrl ?? null,
+        alt_image_url: char.altImageUrl ?? null,
         bio: char.bio ?? null,
+        languages: parseDelimitedList(char.languages),
+        tools: parseDelimitedList(char.tools),
+        instruments: parseDelimitedList(char.instruments),
+        occupation: char.occupation ?? null,
+        age: char.age ?? null,
+        height: char.height ?? null,
+        likes: char.likes ?? null,
+        dislikes: char.dislikes ?? null,
+        fact: char.fact ?? null,
+        bravery: char.bravery ?? null,
+        charm: char.charm ?? null,
+        kindness: char.kindness ?? null,
+        knowledge: char.knowledge ?? null,
+        technique: char.technique ?? null,
         max_hp: char.maxHp,
-        speed: char.speed ?? 30,
         strength: char.strength,
         dexterity: char.dexterity,
         constitution: char.constitution,
@@ -506,7 +575,8 @@ export default function CharacterImporter({
         const inventoryData = [];
         for (const item of characterData.inventory) {
           let magicItemId = null;
-          let mundaneItemName = null;
+          let equipmentId = null;
+          let trinketName = null;
           
           if (item.is_magic_item) {
             // Look up magic item by name
@@ -519,19 +589,34 @@ export default function CharacterImporter({
             if (magicItemRecord) {
               magicItemId = magicItemRecord.id;
             } else {
-              // Skip items that can't be resolved
-              console.warn(`[Character Import] Skipping magic item "${item.name}" - not found in database`);
-              continue;
+              // Preserve unresolved imported items as custom trinkets.
+              trinketName = item.name;
+              console.warn(`[Character Import] Imported "${item.name}" as trinket (magic item reference not found)`);
             }
           } else {
-            // Mundane item - store the name directly
-            mundaneItemName = item.name;
+            const { data: equipmentRecord } = await supabase
+              .from('equipment')
+              .select('id')
+              .eq('name', item.name)
+              .single();
+
+            if (equipmentRecord) {
+              equipmentId = equipmentRecord.id;
+            } else {
+              trinketName = item.name;
+              console.warn(`[Character Import] Imported "${item.name}" as trinket (equipment reference not found)`);
+            }
+          }
+
+          if (!magicItemId && !equipmentId && !trinketName) {
+            continue;
           }
           
           inventoryData.push({
             character_id: characterId,
             ...(magicItemId ? { magic_item_id: magicItemId } : {}),
-            ...(mundaneItemName ? { mundane_item_name: mundaneItemName } : {}),
+            ...(equipmentId ? { equipment_id: equipmentId } : {}),
+            ...(trinketName ? { trinket_name: trinketName } : {}),
             quantity: item.quantity || 1,
             equipped: item.equipped || false,
             attuned: item.attuned || false,
@@ -543,12 +628,6 @@ export default function CharacterImporter({
           const { error } = await supabase.from('character_inventory').insert(inventoryData);
           if (error) throw error;
         }
-      }
-
-      if (characterData.currency) {
-        const currencyWithCharId = { ...characterData.currency, character_id: characterId };
-        const { error } = await supabase.from('character_currency').insert(currencyWithCharId);
-        if (error) throw error;
       }
 
       if (characterData.senses.length > 0) {
@@ -784,7 +863,7 @@ export default function CharacterImporter({
                             <input value={editForm.rarity} onChange={(e) => setEditForm({ ...editForm, rarity: e.target.value })} placeholder="Rarity" />
                             <input value={editForm.requires_attunement} onChange={(e) => setEditForm({ ...editForm, requires_attunement: e.target.value })} placeholder="Attunement" />
                             <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} placeholder="Description" rows={4} style={{ gridColumn: '1 / -1' }} />
-                            <textarea value={editForm.properties} onChange={(e) => setEditForm({ ...editForm, properties: e.target.value })} placeholder="Properties (JSON)" rows={3} style={{ gridColumn: '1 / -1', fontFamily: 'monospace' }} />
+                            <textarea value={editForm.benefits} onChange={(e) => setEditForm({ ...editForm, benefits: e.target.value })} placeholder="Benefits (JSON)" rows={3} style={{ gridColumn: '1 / -1', fontFamily: 'monospace' }} />
                           </div>
                         )}
 
@@ -1187,7 +1266,7 @@ export default function CharacterImporter({
                           borderRadius: '3px',
                           color: '#1976d2'
                         }}>
-                          {feature.source}
+                          {formatFeatureSource(feature.source)}
                         </span>
                       </div>
                       
@@ -1366,22 +1445,22 @@ export default function CharacterImporter({
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', color: '#666' }}>
-                Or paste a user ID:
+                User assignment notes:
               </label>
-              <input
-                type="text"
-                value={selectedUserId}
-                onChange={(e) => setSelectedUserId(e.target.value)}
-                placeholder="Paste user UUID here"
+              <div
                 style={{
                   width: '100%',
                   padding: '10px',
                   borderRadius: '4px',
-                  border: '1px solid #ccc',
-                  fontSize: '14px',
-                  fontFamily: 'monospace'
+                  border: '1px solid #ddd',
+                  background: '#fafafa',
+                  fontSize: '13px',
+                  color: '#555',
+                  lineHeight: 1.45
                 }}
-              />
+              >
+                Character imports from this screen can only be saved to the currently signed-in user due to database row-level security.
+              </div>
             </div>
           </div>
 
@@ -1397,6 +1476,154 @@ export default function CharacterImporter({
             </div>
             <div>
               <strong>Class(es):</strong> {characterData.character.classes.map(c => `${c.class} ${c.level}`).join(' / ')}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '20px', padding: '15px', background: '#fff', borderRadius: '4px' }}>
+            <h4 style={{ marginTop: 0 }}>Profile Fields</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Full Name</label>
+                <input
+                  value={characterData.character.fullName ?? ''}
+                  onChange={(e) => updateCharacterField('fullName', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Occupation</label>
+                <input
+                  value={characterData.character.occupation ?? ''}
+                  onChange={(e) => updateCharacterField('occupation', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Age</label>
+                <input
+                  value={characterData.character.age ?? ''}
+                  onChange={(e) => updateCharacterField('age', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Height</label>
+                <input
+                  value={characterData.character.height ?? ''}
+                  onChange={(e) => updateCharacterField('height', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Alternate Image URL</label>
+                <input
+                  value={characterData.character.altImageUrl ?? ''}
+                  onChange={(e) => updateCharacterField('altImageUrl', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Languages (comma separated)</label>
+                <input
+                  value={Array.isArray(characterData.character.languages) ? characterData.character.languages.join(', ') : (characterData.character.languages || '')}
+                  onChange={(e) => updateCharacterField('languages', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Tools (comma separated)</label>
+                <input
+                  value={Array.isArray(characterData.character.tools) ? characterData.character.tools.join(', ') : (characterData.character.tools || '')}
+                  onChange={(e) => updateCharacterField('tools', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Instruments (comma separated)</label>
+                <input
+                  value={Array.isArray(characterData.character.instruments) ? characterData.character.instruments.join(', ') : (characterData.character.instruments || '')}
+                  onChange={(e) => updateCharacterField('instruments', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Likes</label>
+                <input
+                  value={characterData.character.likes ?? ''}
+                  onChange={(e) => updateCharacterField('likes', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Dislikes</label>
+                <input
+                  value={characterData.character.dislikes ?? ''}
+                  onChange={(e) => updateCharacterField('dislikes', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Fact</label>
+                <input
+                  value={characterData.character.fact ?? ''}
+                  onChange={(e) => updateCharacterField('fact', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Bravery</label>
+                <input
+                  type="number"
+                  value={characterData.character.bravery ?? ''}
+                  onChange={(e) => updateCharacterField('bravery', e.target.value === '' ? null : Number(e.target.value))}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Charm</label>
+                <input
+                  type="number"
+                  value={characterData.character.charm ?? ''}
+                  onChange={(e) => updateCharacterField('charm', e.target.value === '' ? null : Number(e.target.value))}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Kindness</label>
+                <input
+                  type="number"
+                  value={characterData.character.kindness ?? ''}
+                  onChange={(e) => updateCharacterField('kindness', e.target.value === '' ? null : Number(e.target.value))}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Knowledge</label>
+                <input
+                  type="number"
+                  value={characterData.character.knowledge ?? ''}
+                  onChange={(e) => updateCharacterField('knowledge', e.target.value === '' ? null : Number(e.target.value))}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Technique</label>
+                <input
+                  type="number"
+                  value={characterData.character.technique ?? ''}
+                  onChange={(e) => updateCharacterField('technique', e.target.value === '' ? null : Number(e.target.value))}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold' }}>Biography</label>
+                <textarea
+                  rows={4}
+                  value={characterData.character.bio ?? ''}
+                  onChange={(e) => updateCharacterField('bio', e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
             </div>
           </div>
 

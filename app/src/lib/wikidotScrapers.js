@@ -5,14 +5,26 @@
 /**
  * Parse spell data from wikidot HTML
  */
-export function parseSpellHtml(html) {
+export function parseSpellHtml(html, spellUrl = null) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
   
   // Extract spell name from title
   const pageTitle = doc.querySelector('.page-title') || doc.querySelector('h1');
-  const title = pageTitle?.textContent?.trim() || 
-                doc.title.replace(' - D&D 2024', '').replace(' - ', '').trim();
+  let title = pageTitle?.textContent?.trim() || 
+              doc.title.replace(' - D&D 2024', '').replace(' - D&D 5e', '').replace(' - ', '').trim();
+  
+  // Fallback: extract spell name from URL if we have it
+  if (!title && spellUrl) {
+    const match = spellUrl.match(/\/spell:([^\/]+)/i);
+    if (match) {
+      // Convert slug back to title case: "magic-missile" -> "Magic Missile"
+      title = match[1]
+        .split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+    }
+  }
   
   // Extract stats from the page
   const pageContent = doc.querySelector('#page-content') || doc.body;
@@ -21,14 +33,19 @@ export function parseSpellHtml(html) {
   const text = pageContent.textContent;
   
   // Parse level (e.g., "1st-level", "Level 1", or "Cantrip")
-  const levelMatch = text.match(/(?:^|\n)\s*(Cantrip|\d+)(?:st|nd|rd|th)?(?:-?level)?/i) ||
-    text.match(/\bLevel\s*(\d+)\b/i);
-  const levelText = levelMatch ? (levelMatch[1] || levelMatch[0]) : null;
-  const level = levelText && /cantrip/i.test(levelText)
-    ? 0
-    : levelText
-      ? parseInt(levelText.match(/\d+/)?.[0] || '0', 10)
-      : 0;
+  // Search only in first 500 chars to avoid stat blocks
+  const headerText = text.substring(0, 500);
+  
+  // Look for patterns like "1st-level", "2nd-level", "Cantrip" (not multi-digit like "16")
+  let level = 0;
+  if (/\bCantrip\b/i.test(headerText)) {
+    level = 0;
+  } else {
+    const levelMatch = headerText.match(/\b([1-9])(?:st|nd|rd|th)?\s*-?\s*level\b/i);
+    if (levelMatch) {
+      level = parseInt(levelMatch[1], 10);
+    }
+  }
   
   // Parse school
   const schoolMatch = text.match(/(Abjuration|Conjuration|Divination|Enchantment|Evocation|Illusion|Necromancy|Transmutation)/i);
@@ -80,6 +97,130 @@ export function parseSpellHtml(html) {
       higher_levels = slotMatch[1].trim();
     }
   }
+
+  // Parse combat mechanics from description and full text
+  const fullText = description + ' ' + higher_levels;
+  const lowerText = fullText.toLowerCase();
+
+  // Detect is_attack - spell attack roll
+  const is_attack = /spell attack|makes? a spell attack|makes? an attack roll/.test(lowerText);
+
+  // Detect is_save - saving throw
+  const is_save = /saving throw|make a.*save|makes? a.*saving throw/.test(lowerText);
+
+  // Extract save_type if saving throw is required
+  let save_type = null;
+  if (is_save) {
+    const savePatterns = [
+      { pattern: /\b(?:Strength|STR)\s+(?:saving throw|save)\b/i, value: 'STR' },
+      { pattern: /\b(?:Dexterity|DEX)\s+(?:saving throw|save)\b/i, value: 'DEX' },
+      { pattern: /\b(?:Constitution|CON)\s+(?:saving throw|save)\b/i, value: 'CON' },
+      { pattern: /\b(?:Intelligence|INT)\s+(?:saving throw|save)\b/i, value: 'INT' },
+      { pattern: /\b(?:Wisdom|WIS)\s+(?:saving throw|save)\b/i, value: 'WIS' },
+      { pattern: /\b(?:Charisma|CHA)\s+(?:saving throw|save)\b/i, value: 'CHA' }
+    ];
+    
+    for (const { pattern, value } of savePatterns) {
+      if (pattern.test(fullText)) {
+        save_type = value;
+        break;
+      }
+    }
+  }
+
+  // Detect add_modifier - modifier added to damage
+  const add_modifier = /\+.*(?:spellcasting ability modifier|spell ability modifier|ability modifier|modifier)/.test(lowerText);
+
+  // Extract dice array and effect type
+  let dice = null;
+  let effect_type = null;
+
+  // Detect effect type first (damage type, healing, or temp HP)
+  const damageTypes = ['Acid', 'Bludgeoning', 'Cold', 'Fire', 'Force', 'Lightning', 'Necrotic', 'Piercing', 'Poison', 'Psychic', 'Radiant', 'Slashing', 'Thunder'];
+  
+  // Check for healing
+  if (/\b(?:heals?|restores?|regains?)\s+(?:\d+d\d+|\d+)?\s*(?:hit points?|hp)\b/i.test(fullText)) {
+    effect_type = 'Healing';
+  }
+  // Check for temporary hit points
+  else if (/\btemporary hit points?\b/i.test(fullText)) {
+    effect_type = 'Temp HP';
+  }
+  // Check for damage types
+  else {
+    for (const damageType of damageTypes) {
+      const pattern = new RegExp(`\\b${damageType}\\s+damage\\b`, 'i');
+      if (pattern.test(fullText)) {
+        effect_type = damageType;
+        break;
+      }
+    }
+  }
+
+  // Parse dice array based on spell level
+  if (level === 0) {
+    // Cantrip - keep existing simple extraction
+    const diceMatches = fullText.match(/(\d+d\d+)/gi);
+    dice = diceMatches ? [...new Set(diceMatches)] : null;
+  } else {
+    // Leveled spell - build dice array indexed by spell level
+    // Extract base damage dice from description
+    const baseDiceMatch = description.match(/(\d+d\d+)/i);
+    
+    if (baseDiceMatch) {
+      const baseDice = baseDiceMatch[1];
+      const diceArray = [baseDice]; // Index 0 = base spell level
+      
+      // Check for scaling in "At Higher Levels"
+      if (higher_levels) {
+        // Pattern: "increases by XdY for each spell slot level above N"
+        const scalingMatch = higher_levels.match(/increases?\s+by\s+(\d+d\d+)\s+for\s+each\s+(?:spell\s+)?slot\s+level\s+above\s+(?:\d+|first|1st|2nd|3rd)/i);
+        
+        if (scalingMatch) {
+          const scalingDice = scalingMatch[1];
+          
+          // Parse the base dice value (e.g., "8d6" -> 8 dice of d6)
+          const [baseCount, baseDie] = baseDice.split('d').map(n => parseInt(n));
+          const [scaleCount, scaleDie] = scalingDice.split('d').map(n => parseInt(n));
+          
+          // Build the array for levels above base (up to 9th level)
+          for (let i = 1; i <= (9 - level); i++) {
+            const newCount = baseCount + (scaleCount * i);
+            diceArray.push(`${newCount}d${baseDie}`);
+          }
+        } else {
+          // Check for absolute value scaling: "When you cast this spell using a spell slot of 3rd level or higher..."
+          // Pattern: "slot of Xth level..., the damage is YdZ"
+          const absoluteMatches = [...higher_levels.matchAll(/spell\s+slot\s+of\s+(\d+)(?:st|nd|rd|th)\s+level[^,]*,?\s+(?:the\s+)?(?:damage|healing|effect)\s+(?:is|increases?\s+to)\s+(\d+d\d+)/gi)];
+          
+          if (absoluteMatches.length > 0) {
+            absoluteMatches.forEach(match => {
+              const slotLevel = parseInt(match[1]);
+              const diceValue = match[2];
+              const index = slotLevel - level;
+              if (index > 0 && index < diceArray.length + 5) {
+                // Fill gaps if needed
+                while (diceArray.length < index) {
+                  diceArray.push(diceArray[diceArray.length - 1]);
+                }
+                diceArray[index] = diceValue;
+              }
+            });
+          }
+        }
+      }
+      
+      dice = diceArray;
+    }
+  }
+
+  // Extract spell lists - look for class names in the text
+  const classNames = ['Bard', 'Cleric', 'Druid', 'Paladin', 'Ranger', 'Sorcerer', 'Warlock', 'Wizard', 'Artificer'];
+  const spell_lists = classNames.filter(className => {
+    // Look for standalone class name mentions
+    const regex = new RegExp(`\\b${className}(?:'s)?\\b`, 'i');
+    return regex.test(text);
+  });
   
   // Validate required fields
   if (!title) {
@@ -110,7 +251,14 @@ export function parseSpellHtml(html) {
     components: components || null,
     duration: duration || null,
     description: description.trim(),
-    higher_levels: higher_levels || null
+    higher_levels: higher_levels || null,
+    is_attack: is_attack || false,
+    is_save: is_save || false,
+    save_type: save_type || null,
+    add_modifier: add_modifier || false,
+    dice: dice || null,
+    effect_type: effect_type || null,
+    spell_lists: spell_lists.length > 0 ? spell_lists : null
   };
 }
 
@@ -168,7 +316,7 @@ export function parseItemHtml(html) {
     rarity: rarity || null,
     requires_attunement,
     description,
-    properties: null // Can be added manually later
+    benefits: null // Can be added manually later
   };
 }
 
@@ -618,4 +766,44 @@ function parseFightingStyles(text) {
   }
 
   return { choice: true };
+}
+/**
+ * Parse spell list page (e.g., https://dnd5e.wikidot.com/spells:bard/)
+ * Extracts spell names and links from a class/category spell list
+ * Returns array of { name, url } objects
+ */
+export function parseSpellListHtml(html, baseDomain = 'https://dnd5e.wikidot.com') {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  const spells = [];
+  const pageContent = doc.querySelector('#page-content') || doc.body;
+  if (!pageContent) return spells;
+
+  // Look for spell links - they're typically in lists or tables
+  // Pattern 1: Direct links like <a href="/spell:fireball">Fireball</a>
+  const spellLinks = pageContent.querySelectorAll('a[href*="/spell:"]');
+  
+  spellLinks.forEach(link => {
+    const name = link.textContent?.trim();
+    const href = link.getAttribute('href');
+    
+    if (name && href && !name.match(/^(Spell|spells|See|view)/i)) {
+      // Avoid duplicates
+      if (!spells.find(s => s.name.toLowerCase() === name.toLowerCase())) {
+        // Build full URL from baseDomain if href is relative
+        let fullUrl = href;
+        if (!href.startsWith('http')) {
+          fullUrl = `${baseDomain}${href}`;
+        }
+        
+        spells.push({
+          name: name.charAt(0).toUpperCase() + name.slice(1),
+          url: fullUrl
+        });
+      }
+    }
+  });
+
+  return spells;
 }

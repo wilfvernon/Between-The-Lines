@@ -14,7 +14,34 @@
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
+
+*::selection {
+  background: transparent;
+  color: inherit;
+}
+
+*::-moz-selection {
+  background: transparent;
+  color: inherit;
+}
+
+*:active {
+  outline: none;
+}
+
+*:focus {
+  outline: none;
+}
+
+button,
+a {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 
 body {
   margin: 0;

@@ -38,7 +38,10 @@ export default defineConfig({
       workbox: {
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
-        globIgnores: ['**/leather.png'],
+        globIgnores: [
+          '**/textures/materials/leather.png',
+          '**/textures-backup-*/**'
+        ],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

@@ -25,6 +25,12 @@ export function transformDnDBeyondCharacter(dndBeyondData, userId) {
   };
 }
 
+function abilityModifier(score) {
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.floor((numeric - 10) / 2);
+}
+
 /**
  * Extract core character data for the `characters` table
  */
@@ -38,6 +44,10 @@ function extractCharacterCore(char, userId) {
   
   // Total character level
   const level = char.classes.reduce((sum, cls) => sum + cls.level, 0);
+  const constitutionScore = char.stats.find((stat) => stat.id === 3)?.value ?? 10;
+  const constitutionMod = abilityModifier(constitutionScore);
+  const importedBaseHp = Number(char.baseHitPoints) || 0;
+  const calculatedMaxHp = importedBaseHp + (constitutionMod * Math.max(level, 1));
   
   // Map D&D Beyond stat IDs (1-6) to our ability names
   const abilityMap = {
@@ -66,18 +76,106 @@ function extractCharacterCore(char, userId) {
     console.log('[extractCharacterCore] Background modifiers for', char.name, ':', char.modifiers.background);
   }
   
+  const toolAndInstrumentData = extractToolAndInstrumentProficiencies(char);
+
   return {
     userId,
     name: char.name,
-    fullName: null,
+    fullName: char.socialName || char.name || null,
     level,
     classes,
     species: char.race?.fullName || 'Unknown',
     background: char.background?.definition?.name || null,
-    maxHp: char.overrideHitPoints || char.baseHitPoints,
+    imageUrl: char.decorations?.avatarUrl || char.race?.portraitAvatarUrl || null,
+    altImageUrl: char.decorations?.backdropAvatarUrl || char.race?.largeAvatarUrl || null,
+    bio: char.notes?.backstory || null,
+    languages: extractLanguages(char),
+    tools: toolAndInstrumentData.tools,
+    instruments: toolAndInstrumentData.instruments,
+    occupation: char.background?.definition?.name || null,
+    age: normalizeProfileText(char.age),
+    height: normalizeProfileText(char.height),
+    likes: normalizeProfileText(char.traits?.personalityTraits),
+    dislikes: normalizeProfileText(char.traits?.flaws),
+    fact: normalizeProfileText(char.traits?.ideals || char.traits?.bonds || char.notes?.otherNotes),
+    bravery: null,
+    charm: null,
+    kindness: null,
+    knowledge: null,
+    technique: null,
+    maxHp: Number.isFinite(Number(char.overrideHitPoints))
+      ? Number(char.overrideHitPoints)
+      : calculatedMaxHp,
     speed: char.race?.weightSpeeds?.normal?.walk || 30,
     ...flattenAbilityScores(abilityScores),
     spellcastingAbility: determineSpellcastingAbility(char.classes[0]),
+  };
+}
+
+function normalizeProfileText(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractLanguages(char) {
+  const languages = new Set();
+
+  const allModifiers = [
+    ...(char.modifiers?.race || []),
+    ...(char.modifiers?.class || []),
+    ...(char.modifiers?.background || []),
+    ...(char.modifiers?.feat || []),
+  ];
+
+  allModifiers.forEach((mod) => {
+    if (mod.type === 'language') {
+      const name = mod.friendlySubtypeName || mod.subType;
+      if (name) languages.add(name);
+    }
+  });
+
+  return Array.from(languages);
+}
+
+function extractToolAndInstrumentProficiencies(char) {
+  const tools = new Set();
+  const instruments = new Set();
+
+  const allModifiers = [
+    ...(char.modifiers?.race || []),
+    ...(char.modifiers?.class || []),
+    ...(char.modifiers?.background || []),
+    ...(char.modifiers?.feat || []),
+  ];
+
+  const isSkillName = (name = '') => {
+    const n = name.toLowerCase();
+    return [
+      'acrobatics', 'animal handling', 'arcana', 'athletics', 'deception', 'history',
+      'insight', 'intimidation', 'investigation', 'medicine', 'nature', 'perception',
+      'performance', 'persuasion', 'religion', 'sleight of hand', 'stealth', 'survival'
+    ].includes(n);
+  };
+
+  allModifiers.forEach((mod) => {
+    if (mod.type !== 'proficiency') return;
+    const rawName = (mod.friendlySubtypeName || mod.subType || '').trim();
+    if (!rawName || isSkillName(rawName)) return;
+
+    if (/instrument/i.test(rawName) || /(lute|lyre|flute|drum|viol|horn|bagpipes|dulcimer|mandolin|shawm)/i.test(rawName)) {
+      instruments.add(rawName);
+      return;
+    }
+
+    if (/tools?/i.test(rawName)) {
+      tools.add(rawName);
+    }
+  });
+
+  return {
+    tools: Array.from(tools),
+    instruments: Array.from(instruments)
   };
 }
 

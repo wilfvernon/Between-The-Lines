@@ -77,63 +77,86 @@ function isWikidotPageNotFound(html) {
  * Returns { html, attemptedUrls } to track which domains were tried
  */
 export async function fetchWikidot(url) {
-  const corsProxy = 'https://api.allorigins.win/raw?url=';
+  // Multiple CORS proxy options with fallback chain
+  const corsProxies = [
+    (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    (url) => `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(url)}`,
+  ];
+  
   const attemptedUrls = [];
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const tryFetch = async (targetUrl) => {
-    attemptedUrls.push(targetUrl);
-    console.log(`[fetchWikidot] Attempting: ${targetUrl}`);
-    const response = await fetch(corsProxy + encodeURIComponent(targetUrl));
-    
-    // Check for rate limiting (429)
-    if (response.status === 429) {
-      console.log(`[fetchWikidot] Got 429 rate limit at ${targetUrl}`);
-      throw new Error(`Rate limited (429) at ${targetUrl}`);
+  const tryFetchWithProxy = async (targetUrl, proxyFn) => {
+    try {
+      const proxyUrl = proxyFn(targetUrl);
+      console.log(`[fetchWikidot] Attempting: ${targetUrl}`);
+      const response = await fetch(proxyUrl, { timeout: 5000 });
+      
+      // Check for rate limiting (429)
+      if (response.status === 429) {
+        console.log(`[fetchWikidot] Got 429 rate limit`);
+        throw new Error(`Rate limited (429)`);
+      }
+      
+      if (!response.ok) {
+        console.log(`[fetchWikidot] Got ${response.status}`);
+        throw new Error(`Failed to fetch: ${response.statusText}`);
+      }
+      
+      const html = await response.text();
+      console.log(`[fetchWikidot] Got 200 response from ${targetUrl}, checking content...`);
+      
+      // Check if wikidot returned a "page not found" page
+      if (isWikidotPageNotFound(html)) {
+        console.log(`[fetchWikidot] Content indicates page not found`);
+        throw new Error('Wikidot page not found');
+      }
+      
+      console.log(`[fetchWikidot] ✅ Successfully fetched ${targetUrl}`);
+      return html;
+    } catch (error) {
+      throw error;
     }
-    
-    if (!response.ok) {
-      console.log(`[fetchWikidot] Got ${response.status} at ${targetUrl}`);
-      throw new Error(`Failed to fetch: ${response.statusText}`);
-    }
-    
-    const html = await response.text();
-    console.log(`[fetchWikidot] Got 200 response from ${targetUrl}, checking content...`);
-    
-    // Check if wikidot returned a "page not found" page
-    if (isWikidotPageNotFound(html)) {
-      console.log(`[fetchWikidot] Content indicates page not found, will try fallback`);
-      throw new Error('Wikidot page not found');
-    }
-    
-    console.log(`[fetchWikidot] ✅ Successfully fetched ${targetUrl}`);
-    return html;
   };
 
-  try {
-    const html = await tryFetch(url);
-    return { html, attemptedUrls };
-  } catch (error) {
-    if (url.includes('dnd2024.wikidot.com')) {
-      const fallbackUrl = url.replace('dnd2024.wikidot.com', 'dnd5e.wikidot.com');
-      console.log(`[fetchWikidot] Initial attempt failed, waiting 1s before trying fallback...`);
-      await sleep(1000); // Wait 1 second before fallback to avoid rate limiting
-      try {
-        const html = await tryFetch(fallbackUrl);
-        return { html, attemptedUrls };
-      } catch {
-        // Both attempts failed; create error message with all attempted URLs
-        const urlList = attemptedUrls.join(' → ');
-        console.log(`[fetchWikidot] Both attempts failed: ${urlList}`);
-        const err = new Error(`Failed after trying: ${urlList}`);
-        err.attemptedUrls = attemptedUrls;
-        throw err;
+  // Try main URL with all CORS proxies
+  for (let i = 0; i < corsProxies.length; i++) {
+    try {
+      const html = await tryFetchWithProxy(url, corsProxies[i]);
+      return { html, attemptedUrls: [url] };
+    } catch (error) {
+      console.log(`[fetchWikidot] Proxy ${i + 1}/${corsProxies.length} failed: ${error.message}`);
+      if (i < corsProxies.length - 1) {
+        await sleep(500); // Brief delay before next proxy
       }
     }
-    // Single attempt failed
-    console.log(`[fetchWikidot] Fetch failed (no fallback): ${error.message}`);
-    const err = new Error(error.message);
-    err.attemptedUrls = attemptedUrls;
-    throw err;
   }
+
+  // If main URL failed with all proxies and it's dnd2024, try dnd5e fallback
+  if (url.includes('dnd2024.wikidot.com')) {
+    const fallbackUrl = url.replace('dnd2024.wikidot.com', 'dnd5e.wikidot.com');
+    attemptedUrls.push(fallbackUrl);
+    console.log(`[fetchWikidot] Main attempts failed, trying fallback: ${fallbackUrl}`);
+    await sleep(1000);
+    
+    for (let i = 0; i < corsProxies.length; i++) {
+      try {
+        const html = await tryFetchWithProxy(fallbackUrl, corsProxies[i]);
+        return { html, attemptedUrls };
+      } catch (error) {
+        console.log(`[fetchWikidot] Fallback proxy ${i + 1}/${corsProxies.length} failed: ${error.message}`);
+        if (i < corsProxies.length - 1) {
+          await sleep(500);
+        }
+      }
+    }
+  }
+
+  // All attempts failed
+  const errorMsg = `Failed to fetch ${url} with all available proxies. Try pasting the HTML directly instead.`;
+  console.log(`[fetchWikidot] ${errorMsg}`);
+  const err = new Error(errorMsg);
+  err.attemptedUrls = attemptedUrls;
+  throw err;
 }

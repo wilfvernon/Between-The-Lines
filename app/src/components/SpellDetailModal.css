@@ -1,0 +1,519 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Goudy+Bookletter+1911&display=swap');
+
+.spell-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(3px);
+}
+
+.spell-detail-modal {
+  position: relative;
+  background:
+    linear-gradient(135deg, rgba(10, 8, 12, 0.38), rgba(20, 16, 22, 0.42)),
+    var(--school-texture, url('/textures/materials/parchment.png')) center / cover no-repeat;
+  border: 2px solid var(--school-border, #5b2d0a);
+  border-radius: 10px;
+  width: 90%;
+  max-width: 700px;
+  max-height: 90vh;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: spell-modal-open 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  color: var(--school-text, #efe7dc);
+}
+
+.spell-school-divination {
+  background:
+    linear-gradient(135deg, rgba(10, 8, 12, 0.15), rgba(20, 16, 22, 0.18)),
+    var(--school-texture, url('/textures/materials/parchment.png')) center / cover no-repeat;
+}
+
+@keyframes spell-modal-open {
+  from {
+    opacity: 0;
+    transform: scale(0.85) perspective(1000px) rotateY(-20deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) perspective(1000px) rotateY(0);
+  }
+}
+
+.spell-detail-header {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 26px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0));
+}
+
+.spell-detail-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.spell-detail-title {
+  margin: 0;
+  font-size: 1.7rem;
+  color: var(--school-title, #f5e7d6);
+  font-weight: 700;
+  font-family: 'Cinzel', 'Georgia', serif;
+  letter-spacing: 0.5px;
+  flex: 1;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+.spell-detail-close {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #efe7dc;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  transition: all 0.2s;
+  opacity: 0.8;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.spell-detail-close:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.spell-detail-close .icon-cross {
+  width: 20px;
+  height: 20px;
+  background-color: currentColor;
+  mask: var(--icon-url) center / contain no-repeat;
+  -webkit-mask: var(--icon-url) center / contain no-repeat;
+}
+
+.spell-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  width: 100%;
+  align-items: flex-start;
+}
+
+.spell-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 1 calc(50% - 8px);
+  min-width: 0;
+}
+
+.spell-meta-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--school-muted, rgba(255, 255, 255, 0.7));
+  letter-spacing: 0.6px;
+  font-family: 'Cinzel', 'Georgia', serif;
+}
+
+.spell-meta-value {
+  font-size: 0.95rem;
+  color: var(--school-text, #efe7dc);
+  font-weight: 500;
+}
+
+.spell-school-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spell-school-icon {
+  width: 20px;
+  height: 20px;
+  aspect-ratio: 1;
+  object-fit: contain;
+  flex-shrink: 0;
+  opacity: var(--school-icon-opacity, 0.85);
+  filter: var(--school-icon-filter, none);
+}
+
+.spell-detail-content {
+  flex: 1;
+  min-height: 0;
+  max-height: calc(90vh - 340px);
+  overflow-y: auto;
+  padding: 22px 26px 26px 26px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  background: linear-gradient(180deg, rgba(10, 8, 12, 0.72), rgba(10, 8, 12, 0.76));
+}
+
+.spell-detail-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.spell-detail-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.spell-detail-content::-webkit-scrollbar-thumb {
+  background: rgba(91, 41, 13, 0.2);
+  border-radius: 3px;
+}
+
+.spell-detail-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(91, 41, 13, 0.4);
+}
+
+.spell-mechanics-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  padding: 12px 0;
+  margin-bottom: 16px;
+  border-top: 1px solid rgba(243, 201, 115, 0.15);
+  border-bottom: 1px solid rgba(243, 201, 115, 0.15);
+}
+
+.spell-mechanic-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+}
+
+.mechanic-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--school-accent, #f3c973);
+  font-family: 'Cinzel', 'Georgia', serif;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  text-align: center;
+}
+
+.mechanic-dash {
+  font-size: 1.2rem;
+  color: rgba(243, 201, 115, 0.5);
+  font-weight: 700;
+}
+
+.spell-section {
+  margin-bottom: 20px;
+}
+
+.spell-section:last-child {
+  margin-bottom: 0;
+}
+
+.spell-section-title {
+  margin: 0 0 8px 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--school-accent, #f3c973);
+  letter-spacing: 0.6px;
+  font-family: 'Cinzel', 'Georgia', serif;
+}
+
+.spell-section-text {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--school-text, #efe7dc);
+}
+
+.spell-description,
+.spell-higher-levels {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--school-text, #efe7dc);
+}
+
+.spell-description > div,
+.spell-higher-levels > div {
+  margin-bottom: 14px;
+}
+
+.spell-description > div:last-child,
+.spell-higher-levels > div:last-child {
+  margin-bottom: 0;
+}
+
+.spell-description p,
+.spell-higher-levels p {
+  margin: 0 0 12px 0;
+}
+
+.spell-description p:last-child,
+.spell-higher-levels p:last-child {
+  margin-bottom: 0;
+}
+
+.spell-description strong,
+.spell-higher-levels strong {
+  color: var(--school-accent, #f3c973);
+  font-weight: 700;
+}
+
+.spell-description .spell-special-text,
+.spell-higher-levels .spell-special-text {
+  color: var(--school-accent, #f3c973);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.spell-mechanics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.spell-mechanic-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+}
+
+.spell-mechanic-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--school-muted, rgba(255, 255, 255, 0.7));
+  letter-spacing: 0.6px;
+  font-family: 'Cinzel', 'Georgia', serif;
+}
+
+.spell-mechanic-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--school-accent, #f3c973);
+  font-family: 'Goudy Bookletter 1911', 'Georgia', serif;
+}
+
+.spell-mechanic-ability {
+  font-size: 0.8rem;
+  color: var(--school-muted, rgba(255, 255, 255, 0.7));
+  font-style: italic;
+}
+
+.spell-effect-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spell-effect-icon {
+  width: 24px;
+  height: 24px;
+  opacity: 0.8;
+}
+
+.spell-classes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.spell-class-badge {
+  display: inline-block;
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--school-text, #efe7dc);
+  font-weight: 600;
+}
+
+/* School-specific color palettes */
+.spell-school-abjuration {
+  --school-border: #4a6fa5;
+  --school-accent: #87ceeb;
+  --school-text: #e8f4f8;
+  --school-muted: rgba(232, 244, 248, 0.75);
+  --school-title: #ffffff;
+  --school-icon-opacity: 0.8;
+  --school-icon-filter: invert(0.85);
+}
+
+.spell-school-conjuration {
+  --school-border: #9a7f2e;
+  --school-accent: #c9a857;
+  --school-text: #f5e7d6;
+  --school-muted: rgba(245, 231, 214, 0.85);
+  --school-title: #ffffff;
+  --school-icon-opacity: 0.85;
+  --school-icon-filter: invert(0.85);
+}
+
+.spell-school-conjuration .spell-detail-header {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.06));
+}
+
+.spell-school-conjuration .spell-meta-label,
+.spell-school-conjuration .spell-meta-value {
+  color: #f5e7d6;
+}
+
+.spell-school-conjuration .spell-school-icon {
+  opacity: 0.9;
+  filter: invert(0.85) sepia(0.3);
+}
+
+.spell-school-divination {
+  --school-border: #87ceeb;
+  --school-accent: #b0e0e6;
+  --school-text: #e6f4ff;
+  --school-muted: rgba(230, 244, 255, 0.8);
+  --school-title: #ffffff;
+  --school-icon-opacity: 0.8;
+  --school-icon-filter: invert(0.75);
+}
+
+.spell-school-divination .spell-detail-header {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0));
+}
+
+.spell-school-divination .spell-meta-label,
+.spell-school-divination .spell-meta-value {
+  color: #2d2d2d;
+}
+
+.spell-school-divination .spell-school-icon {
+  opacity: 0.85;
+  filter: none;
+}
+
+.spell-school-enchantment {
+  --school-border: #ff69b4;
+  --school-accent: #ffb6d9;
+  --school-text: #fce6f5;
+  --school-muted: rgba(252, 230, 245, 0.8);
+  --school-title: #ffffff;
+  --school-icon-opacity: 0.8;
+  --school-icon-filter: invert(0.15);
+}
+
+.spell-school-enchantment .spell-meta-label,
+.spell-school-enchantment .spell-meta-value {
+  color: #f0e0cc;
+}
+
+.spell-school-enchantment .spell-school-icon {
+  opacity: 0.9;
+  filter: invert(0.85) sepia(0.2);
+}
+
+.spell-school-illusion {
+  --school-border: #663399;
+  --school-accent: #9966cc;
+  --school-text: #f0e6ff;
+  --school-muted: rgba(240, 230, 255, 0.75);
+  --school-title: #ffffff;
+  --school-icon-opacity: 0.8;
+  --school-icon-filter: invert(0.8);
+}
+
+.spell-school-evocation {
+  --school-border: #8b0000;
+  --school-accent: #ff6b6b;
+  --school-text: #fde8e8;
+  --school-muted: rgba(253, 232, 232, 0.8);
+  --school-title: #ffffff;
+  --school-icon-opacity: 0.8;
+  --school-icon-filter: invert(0.85);
+}
+
+.spell-school-necromancy {
+  --school-border: #5a9e76;
+  --school-accent: #7ecb8a;
+  --school-text: #e8f5ed;
+  --school-muted: rgba(232, 245, 237, 0.85);
+  --school-title: #ffffff;
+  --school-icon-opacity: 0.85;
+  --school-icon-filter: invert(0.85);
+}
+
+.spell-school-necromancy .spell-detail-header {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.06));
+}
+
+.spell-school-necromancy .spell-meta-label,
+.spell-school-necromancy .spell-meta-value {
+  color: #e8f5ed;
+}
+
+.spell-school-necromancy .spell-school-icon {
+  opacity: 0.9;
+  filter: invert(0.85) sepia(0.25);
+}
+
+.spell-school-transmutation {
+  --school-border: #ff8c00;
+  --school-accent: #ffa500;
+  --school-text: #f0e0cc;
+  --school-muted: rgba(240, 224, 204, 0.85);
+  --school-title: #ffffff;
+  --school-icon-opacity: 0.8;
+  --school-icon-filter: invert(0.6);
+}
+
+.spell-school-transmutation .spell-meta-label,
+.spell-school-transmutation .spell-meta-value {
+  color: #f0e0cc;
+}
+
+.spell-school-transmutation .spell-school-icon {
+  opacity: 0.9;
+  filter: invert(0.85) sepia(0.2);
+}
+
+.spell-school-none {
+  --school-border: #6b5344;
+  --school-accent: #f3c973;
+  --school-text: #efe7dc;
+  --school-muted: rgba(239, 231, 220, 0.7);
+  --school-title: #f5e7d6;
+  --school-icon-opacity: 0.8;
+  --school-icon-filter: none;
+}
+
+.spell-school-evocation .spell-section-title,
+.spell-school-illusion .spell-section-title {
+  color: var(--school-text, #efe7dc);
+}
+@media (max-width: 480px) {
+  .spell-detail-modal {
+    max-width: 95%;
+    max-height: 95vh;
+  }
+
+  .spell-detail-title {
+    font-size: 1.4rem;
+  }
+
+  .spell-mechanics-grid,
+  .spell-detail-meta {
+    grid-template-columns: 1fr;
+  }
+}

@@ -26,7 +26,7 @@
 
 .stats-inspector-modal {
   position: relative;
-  background: url('/parchment.png') center / 140% no-repeat;
+  background: url('/textures/materials/parchment.png') center / 140% no-repeat;
   border: 3px solid #5b2d0a;
   border-radius: 8px;
   width: 90%;
@@ -237,6 +237,15 @@
   font-weight: 700;
   font-size: 1.1rem;
   font-family: 'Goudy Bookletter 1911', 'Palatino Linotype', serif;
+}
+
+.proficiency-warning {
+  color: #8b4513;
+  font-size: 0.85rem;
+  font-style: italic;
+  font-weight: normal;
+  opacity: 0.8;
+  margin-left: 4px;
 }
 
 .source-total {

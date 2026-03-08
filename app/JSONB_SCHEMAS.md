@@ -2,6 +2,29 @@
 
 Complete documentation for all JSONB fields in the database.
 
+## Character Profile Columns (Non-JSON)
+
+The character importer and Bio tab now rely on these additional `characters` table columns:
+
+- `alt_image_url` (text): Alternate portrait/backdrop image URL for profile tab artwork.
+- `languages` (text[]): Known spoken/signed languages.
+- `tools` (text[]): Tool proficiencies.
+- `instruments` (text[]): Musical instrument proficiencies.
+- `occupation` (text): Character occupation or role.
+- `age` (text): Character age descriptor.
+- `height` (text): Character height descriptor.
+- `likes` (text): Freeform preferences.
+- `dislikes` (text): Freeform dislikes.
+- `fact` (text): A notable personal fact.
+- `bravery`, `charm`, `kindness`, `knowledge`, `technique` (integer): Bastion/social stat values.
+
+Import notes:
+
+- `languages/tools/instruments` are stored as Postgres arrays and should be sent as JavaScript arrays.
+- Import UI accepts comma-separated input and converts to arrays before insert.
+- `character_inventory` now uses `equipment_id` for non-magic items (legacy `mundane_item_name` is no longer used).
+- Currency is no longer inserted via `character_currency` in the character importer flow.
+
 ## Characters Table
 
 ### `classes` (JSONB, NOT NULL)
@@ -217,10 +240,12 @@ Structured benefits from the feat.
       level?: number;      // Optional spell level
       ability?: string;    // Optional casting stat
       usage?: string;      // "once per long rest", etc.
+      uses?: number;       // Number of uses (e.g., 1 for "once per long rest")
       choice?: {
         count: number;      // Number of spells to choose
         level: number;      // Spell level
         schools?: string[]; // ["divination", "enchantment"]
+        uses?: number;      // Number of uses for chosen spells
       };
     }>;
   };
@@ -306,9 +331,59 @@ Pure combat feat:
 }
 ```
 
+Spell-granting feat (Fey Touched):
+```json
+{
+  "spells": {
+    "grants": [
+      {
+        "name": "Misty Step",
+        "uses": 1
+      },
+      {
+        "choice": {
+          "uses": 1,
+          "count": 1,
+          "level": 1,
+          "schools": [
+            "divination",
+            "enchantment"
+          ]
+        }
+      }
+    ]
+  },
+  "effects": [
+    "Your exposure to the Feywild's magic grants you the following benefits.",
+    "Ability Score Increase. Increase your Intelligence, Wisdom, or Charisma score by 1, to a maximum of 20.",
+    "Fey Magic. Choose one level 1 spell from the Divination or Enchantment school of magic. You always have that spell and the Misty Step spell prepared. You can cast each of these spells without expending a spell slot. Once you cast either spell in this way, you can't cast that spell in this way again until you finish a Long Rest. You can also cast these spells using spell slots you have of the appropriate level. The spells' spellcasting ability is the ability increased by this feat."
+  ],
+  "abilityScoreIncrease": {
+    "amount": 1,
+    "choice": [
+      "intelligence",
+      "wisdom",
+      "charisma"
+    ]
+  }
+}
+```
+
+Expertise with level-based scaling (Bard Expertise):
+```json
+{
+  "expertise": {
+    "skills": ["performance", "persuasion"]
+  }
+}
+```
+
+Note: For features granting expertise, use the `skill_expertise` benefit type in `character_features.benefits` (see Character Features Table section).
+
 ---
 
 ## Character Features Table
+
 
 ### `benefits` (JSONB, nullable)
 
@@ -317,14 +392,17 @@ Structured benefits for class/species/background features. This mirrors the bene
 ```typescript
 Array<
   | { type: 'skill_proficiency'; skill: string; alternate_skill?: boolean }
+  | { type: 'skill_expertise'; skills: string[]; level_scaling?: Record<string, { skills: string[] }> }
   | { type: 'skill_dual_ability'; skills: string[]; ability: string }
   | { type: 'skill_half_proficiency' }
   | { type: 'skill_modifier_bonus'; skills: string[]; bonus_source: string }
   | { type: 'saving_throw_bonus'; ability: string; bonus_source: string }
   | { type: 'ability_check_bonus'; ability: string; bonus_source: string }
   | { type: 'passive_bonus'; passive_name: string; bonus: number }
-  | { type: 'bonus_action'; name: string; range?: string; target?: string }
-  | { type: 'feature_die'; name: string; die: string; scaling?: Record<string, string> }
+  | { type: 'bonus_action'; name: string; range?: string; target?: string; pb_multiplier?: number }
+  | { type: 'feature_die'; name: string; die: string; level_scaling?: Record<string, string> }
+  | { type: 'speed'; speed_value: string; movement_type: string }
+  | { type: 'initiative_bonus'; bonus: string | number }
 >;
 ```
 
@@ -332,16 +410,16 @@ Array<
 ```json
 [
   {
-    "type": "bonus_action",
     "name": "Bardic Inspiration",
+    "type": "bonus_action",
     "range": "60 ft",
     "target": "creature that can see or hear you"
   },
   {
-    "type": "feature_die",
-    "name": "Bardic Inspiration",
     "die": "d6",
-    "scaling": {
+    "name": "Bardic Inspiration",
+    "type": "feature_die",
+    "level_scaling": {
       "5": "d8",
       "10": "d10",
       "15": "d12"
@@ -349,6 +427,68 @@ Array<
   }
 ]
 ```
+
+**Example (Bonus action with proficiency bonus multiplier):**
+```json
+[
+  {
+    "name": "Rabbit Hop",
+    "type": "bonus_action",
+    "pb_multiplier": 5
+  }
+]
+```
+With proficiency bonus +2, this would display as "10 ft" (2 * 5) in the short text.
+
+**Example (Bard Expertise with level-based scaling):**
+```json
+[
+  {
+    "type": "skill_expertise",
+    "skills": ["performance", "persuasion"],
+    "level_scaling": {
+      "9": {
+        "skills": ["deception", "insight"]
+      }
+    }
+  }
+]
+```
+
+**Example (Species movement speeds):**
+```json
+[
+  {
+    "type": "speed",
+    "speed_value": "30ft",
+    "movement_type": "Walking"
+  },
+  {
+    "type": "speed",
+    "speed_value": "30ft",
+    "movement_type": "Swimming"
+  }
+]
+```
+
+**Example (Initiative bonuses):**
+```json
+[
+  {
+    "type": "initiative_bonus",
+    "bonus": "proficiency"
+  },
+  {
+    "type": "initiative_bonus",
+    "bonus": "charisma"
+  },
+  {
+    "type": "initiative_bonus",
+    "bonus": 2
+  }
+]
+```
+Bases: proficiency_bonus, ability name (as modifier), or flat value.
 
 ---
 

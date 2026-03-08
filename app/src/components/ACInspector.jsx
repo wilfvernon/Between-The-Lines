@@ -13,6 +13,8 @@ function ACInspector({
   bonuses = [],
   customModifiers = [],
   customOverride = null,
+  acOverrides = [],
+  abilityModifiers = {},
   onAddCustomModifier,
   onDeleteCustomModifier,
   onSetCustomOverride,
@@ -68,6 +70,22 @@ function ACInspector({
     return acc;
   }, {});
 
+  const overrideRows = (Array.isArray(acOverrides) ? acOverrides : []).map((override, index) => {
+    const mods = Array.isArray(override?.mods) ? override.mods : [];
+    const modSum = mods.reduce((sum, ability) => sum + (Number(abilityModifiers?.[ability]) || 0), 0);
+    const shieldValue = override?.shieldsAllowed ? (Number(override?.shieldBonus) || 0) : 0;
+    const total = (Number(override?.value) || 0) + modSum + shieldValue;
+    const modLabel = mods.length ? mods.map((ability) => ability.slice(0, 3).toUpperCase()).join(' + ') : 'No ability mods';
+    return {
+      id: `${override?.source?.id || 'override'}-${index}`,
+      source: override?.source?.label || 'AC Override',
+      base: Number(override?.value) || 0,
+      modLabel,
+      shield: shieldValue,
+      total
+    };
+  });
+
   const content = (
     <>
       {/* Base Value Section */}
@@ -75,7 +93,7 @@ function ACInspector({
         {armorInfo ? (
           <>
             <div className="value-row base">
-              <span className="label">Armor</span>
+              <span className="label">Armour</span>
               <span className="value armor-name">{armorInfo.name}</span>
             </div>
             <div className="value-row">
@@ -86,7 +104,7 @@ function ACInspector({
         ) : (
           <>
             <div className="value-row base">
-              <span className="label">Base AC (Unarmored)</span>
+              <span className="label">Base AC (Unarmoured)</span>
               <span className="value">10</span>
             </div>
           </>
@@ -183,9 +201,14 @@ function ACInspector({
           {armorInfo?.shield && (
             <div className="bonus-group">
               <div className="bonus-source">
-                <span className="source-label">{armorInfo.shield.name}</span>
+                <span className="source-label">
+                  {armorInfo.shield.name}
+                  {!armorInfo.shield.proficient && (
+                    <span className="proficiency-warning" title="Not proficient - no AC bonus"> (not proficient)</span>
+                  )}
+                </span>
                 <span className="source-total">
-                  +{armorInfo.shield.bonus}
+                  {armorInfo.shield.proficient ? `+${armorInfo.shield.bonus}` : '+0'}
                 </span>
               </div>
             </div>
@@ -205,6 +228,23 @@ function ACInspector({
       ) : (
         <section className="bonuses-section">
           <p className="no-bonuses">No bonuses applied</p>
+        </section>
+      )}
+
+      {overrideRows.length > 0 && (
+        <section className="bonuses-section">
+          <h3>AC Override Formulae</h3>
+          {overrideRows.map((row) => (
+            <div key={row.id} className="bonus-group">
+              <div className="bonus-source">
+                <span className="source-label">{row.source}</span>
+                <span className="source-total">{row.total}</span>
+              </div>
+              <div className="bonus-details">
+                Base {row.base} + {row.modLabel}{row.shield ? ` + Shield ${row.shield}` : ''}
+              </div>
+            </div>
+          ))}
         </section>
       )}
 
@@ -306,7 +346,7 @@ function ACInspector({
     <StatsInspectorModal 
       isOpen={isOpen} 
       onClose={onClose} 
-      title="Armor Class"
+      title="Armour Class"
       footer={footer}
     >
       {content}
@@ -338,6 +378,26 @@ ACInspector.propTypes = {
     })
   ),
   customOverride: PropTypes.number,
+  acOverrides: PropTypes.arrayOf(
+    PropTypes.shape({
+      value: PropTypes.number,
+      mods: PropTypes.arrayOf(PropTypes.string),
+      shieldsAllowed: PropTypes.bool,
+      shieldBonus: PropTypes.number,
+      source: PropTypes.shape({
+        id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+        label: PropTypes.string
+      })
+    })
+  ),
+  abilityModifiers: PropTypes.shape({
+    strength: PropTypes.number,
+    dexterity: PropTypes.number,
+    constitution: PropTypes.number,
+    intelligence: PropTypes.number,
+    wisdom: PropTypes.number,
+    charisma: PropTypes.number
+  }),
   onAddCustomModifier: PropTypes.func,
   onDeleteCustomModifier: PropTypes.func,
   onSetCustomOverride: PropTypes.func,

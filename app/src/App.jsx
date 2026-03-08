@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
+import AssetLoader from './components/AssetLoader';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import CharacterSheet from './pages/CharacterSheet';
@@ -58,9 +59,11 @@ function App() {
           <Route
             path="/"
             element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
+              <AssetLoader mode="critical">
+                <ProtectedRoute>
+                  <Layout />
+                </ProtectedRoute>
+              </AssetLoader>
             }
           >
             <Route index element={<Navigate to="/character" replace />} />

@@ -13,7 +13,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
   const [rarity, setRarity] = useState('');
   const [attunementRequired, setAttunementRequired] = useState('');
   const [description, setDescription] = useState('');
-  const [properties, setProperties] = useState('');
+  const [benefits, setBenefits] = useState('');
   
   // Scraper fields
   const [wikidotInput, setWikidotInput] = useState('http://dnd2024.wikidot.com/magic-item:bag-of-holding');
@@ -29,7 +29,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     setRarity('');
     setAttunementRequired('');
     setDescription('');
-    setProperties('');
+    setBenefits('');
   };
 
   useEffect(() => {
@@ -40,10 +40,12 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     setRarity(prefill.rarity || '');
     setAttunementRequired(prefill.requires_attunement || prefill.attunement_required || '');
     setDescription(prefill.description || '');
-    if (prefill.properties) {
-      setProperties(JSON.stringify(prefill.properties, null, 2));
+    if (prefill.benefits) {
+      setBenefits(JSON.stringify(prefill.benefits, null, 2));
+    } else if (prefill.properties) {
+      setBenefits(JSON.stringify(prefill.properties, null, 2));
     } else {
-      setProperties('');
+      setBenefits('');
     }
     setStatus('⚠️ Prefilled from character import. Review and save.');
     onPrefillConsumed?.();
@@ -74,10 +76,10 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
       setRarity(scraped.rarity || '');
       setAttunementRequired(scraped.requires_attunement || '');
       setDescription(scraped.description || '');
-      if (scraped.properties && typeof scraped.properties === 'object') {
-        setProperties(JSON.stringify(scraped.properties, null, 2));
+      if (scraped.benefits && (typeof scraped.benefits === 'object' || Array.isArray(scraped.benefits))) {
+        setBenefits(JSON.stringify(scraped.benefits, null, 2));
       } else {
-        setProperties('');
+        setBenefits('');
       }
       
       setStatus('✅ Successfully scraped magic item data! Review and click Save.');
@@ -96,13 +98,13 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     setStatus('');
     
     try {
-      // Parse properties JSON if provided
-      let propertiesJson = null;
-      if (properties.trim()) {
+      // Parse benefits JSON if provided
+      let benefitsJson = null;
+      if (benefits.trim()) {
         try {
-          propertiesJson = JSON.parse(properties);
+          benefitsJson = JSON.parse(benefits);
         } catch {
-          throw new Error('Properties must be valid JSON or empty');
+          throw new Error('Benefits must be valid JSON or empty');
         }
       }
       
@@ -114,7 +116,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
           rarity: rarity || null,
           requires_attunement: attunementRequired || null,
           description,
-          properties: propertiesJson
+          benefits: benefitsJson
         }, {
           onConflict: 'name'
         })
@@ -283,7 +285,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
           <div>
             <label>Type 
               <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#666' }}>
-                {' '}(e.g., Weapon, Armor, Wondrous item)
+                {' '}(e.g., Weapon, Armour, Wondrous item)
               </span>
             </label>
             <input 
@@ -335,16 +337,16 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
         </div>
 
         <div style={{ marginTop: '15px' }}>
-          <label>Properties (JSONB)
+          <label>Benefits (JSONB)
             <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#666' }}>
-              {' '}Optional - JSON format: {`{"damage": "1d8", "bonus": "+1", "effects": [...]}`}
+              {' '}Optional - JSON array format: {`[{"uses": {"max": "proficiency", "type": "charges"}}, {"type": "skill_advantage", "skills": ["stealth"]}]`}
             </span>
           </label>
           <textarea 
-            value={properties} 
-            onChange={(e) => setProperties(e.target.value)} 
+            value={benefits} 
+            onChange={(e) => setBenefits(e.target.value)} 
             rows={4}
-            placeholder='{"damage": "1d8", "bonus": "+2", "weight": 3}'
+            placeholder='[{"uses": {"max": "proficiency", "type": "charges"}}]'
             style={{ fontFamily: 'monospace', fontSize: '13px' }}
           />
         </div>

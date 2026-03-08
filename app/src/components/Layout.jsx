@@ -2,13 +2,16 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import weaponIcon from '../assets/icons/entity/weapon.svg';
+import archiveIcon from '../assets/icons/entity/archive.svg';
+import scrollIcon from '../assets/icons/entity/scroll.svg';
 import './Layout.css';
 
 const navItems = [
-  { to: '/character', icon: '⚔️', label: 'Character' },
-  { to: '/bookshelf', icon: '📚', label: 'Bookshelf' },
-  { to: '/galatea', icon: '🎨', label: 'Galatea' },
-  { to: '/notes', icon: '📝', label: 'Notes' },
+  { to: '/character', iconSrc: weaponIcon, label: 'Character' },
+  { to: '/bookshelf', iconSrc: archiveIcon, label: 'Bookshelf' },
+  // { to: '/galatea', icon: '🎨', label: 'Galatea' },
+  { to: '/notes', iconSrc: scrollIcon, label: 'Notes' },
 ];
 
 function Layout() {
@@ -104,7 +107,13 @@ function Layout() {
             to={item.to}
             className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
           >
-            <div className="nav-icon" aria-hidden="true">{item.icon}</div>
+            <div className="nav-icon" aria-hidden="true">
+              {item.iconSrc ? (
+                <img src={item.iconSrc} alt="" className="nav-icon-img" />
+              ) : (
+                item.icon
+              )}
+            </div>
             <div className="nav-label">{item.label}</div>
           </NavLink>
         ))}

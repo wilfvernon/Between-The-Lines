@@ -110,8 +110,9 @@
   right: 0;
   background: linear-gradient(0deg, #34343a 0%, #0b0b0e 100%);
   display: flex;
-  justify-content: space-around;
-  padding: 0.5rem 0;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.8rem calc(0.55rem + env(safe-area-inset-bottom));
   box-shadow: 
     0 -2px 8px rgba(0, 0, 0, 0.5),
     0 -4px 20px rgba(0, 0, 0, 0.3),
@@ -124,22 +125,24 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.5rem 1rem;
-  min-width: 60px;
+  gap: 0.35rem;
+  padding: 0.45rem 0.95rem;
+  min-width: 82px;
   text-decoration: none;
   color: var(--candlekeep-text-dim);
-  transition: all 0.2s;
+  transition: color 0.2s ease, background 0.2s ease, transform 0.2s ease;
   border-radius: 8px;
 }
 
 .nav-item:hover {
   color: var(--candlekeep-accent-light);
-  background: rgba(207, 77, 87, 0.14);
+  background: transparent;
+  transform: translateY(-1px);
 }
 
 .nav-item.active {
   color: var(--candlekeep-accent-light);
+  background: transparent;
   text-shadow: 0 0 8px rgba(207, 77, 87, 0.5);
 }
 
@@ -149,7 +152,6 @@
 }
 
 .nav-item.active .nav-icon {
-  filter: drop-shadow(0 0 8px rgba(207, 77, 87, 0.7));
   animation: icon-pulse 2s ease-in-out infinite;
 }
 
@@ -163,13 +165,33 @@
 }
 
 .nav-icon {
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   line-height: 1;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+}
+
+.nav-icon-img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  opacity: 0.82;
+  filter: brightness(0) saturate(100%) invert(86%) sepia(7%) saturate(236%) hue-rotate(349deg) brightness(91%) contrast(87%);
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+.nav-item:hover .nav-icon-img,
+.nav-item.active .nav-icon-img {
+  opacity: 1;
+  filter: brightness(0) saturate(100%) invert(53%) sepia(16%) saturate(1378%) hue-rotate(304deg) brightness(98%) contrast(92%);
 }
 
 .nav-label {
-  font-size: 0.7rem;
-  font-weight: 500;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
   text-align: center;
 }
 
@@ -197,12 +219,19 @@
   }
 
   .nav-item {
-    padding: 0.4rem 0.6rem;
-    min-width: 50px;
+    padding: 0.4rem 0.55rem;
+    min-width: 72px;
   }
 
   .nav-icon {
-    font-size: 1.3rem;
+    font-size: 1.2rem;
+    width: 24px;
+    height: 24px;
+  }
+
+  .nav-icon-img {
+    width: 20px;
+    height: 20px;
   }
 
   .nav-label {

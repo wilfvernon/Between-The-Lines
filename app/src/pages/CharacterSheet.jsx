@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import useEmblaCarousel from 'embla-carousel-react';
 import PropTypes from 'prop-types';
@@ -6,9 +6,18 @@ import { collectBonuses, deriveCharacterStats } from '../lib/bonusEngine';
 import { useAuth } from '../context/AuthContext';
 import { useCharacter } from '../hooks/useCharacter';
 import { supabase } from '../lib/supabase';
+import { extractFeatAbilityScoreImprovements, getJoinedFeat, normalizeFeatChoices } from '../lib/featChoices';
 import AbilityScoreInspector from '../components/AbilityScoreInspector';
 import ACInspector from '../components/ACInspector';
 import './CharacterSheet.css';
+
+// Extracted tab components
+import BioTab from './CharacterSheet/tabs/BioTab';
+import CreaturesTab from './CharacterSheet/tabs/CreaturesTab';
+import SkillsTab from './CharacterSheet/tabs/SkillsTab';
+import SpellsTab from './CharacterSheet/tabs/SpellsTab';
+import ActionsTab from './CharacterSheet/tabs/ActionsTab';
+import AbilitiesTab from './CharacterSheet/tabs/AbilitiesTab';
 
 /**
  * ⚠️ CRITICAL ARCHITECTURE NOTE ⚠️
@@ -118,9 +127,9 @@ const getAbilityBonuses = (allBonuses = [], abilityName) => {
   return allBonuses.filter(bonus => bonus.target === targetKey);
 };
 
-const TAB_ORDER = ['abilities', 'skills', 'actions', 'spells', 'inventory', 'features', 'bio', 'creatures'];
+const TAB_ORDER = ['bio', 'abilities', 'skills', 'actions', 'spells', 'inventory', 'features', 'creatures'];
 const FEATURE_DESCRIPTION_LIMIT = 240;
-const DEFAULT_FILTERS = ['Weapons', 'Armor', 'Magic', 'Gear'];
+const DEFAULT_FILTERS = ['Weapons', 'Armour', 'Magic', 'Gear', 'Trinkets'];
 
 const RARITY_ORDER = {
   'legendary': 0,
@@ -129,6 +138,193 @@ const RARITY_ORDER = {
   'uncommon': 3,
   'common': 4,
   'unknown': 5
+};
+
+/**
+ * Check if character is proficient with a weapon
+ * 
+ * Rules:
+ * 1. Everyone is proficient with Simple weapons
+ * 2. Martial weapons require specific class proficiency:
+ *    - Full Martial: Barbarian, Fighter, Paladin, Ranger
+ *    - Partial Martial (Rogue): Light or Finesse property weapons
+ *    - Partial Martial (Monk): Light property weapons
+ * 
+ * @param {Object} weapon - The weapon item (equipment object with raw_data)
+ * @param {Object} character - The character object with classes array
+ * @returns {boolean} - True if proficient, false otherwise
+ */
+const isWeaponProficient = (weapon, character) => {
+  if (!weapon || !character) return false;
+  
+  const weaponType = weapon.type || '';
+  const isMartial = weaponType.includes('Martial');
+  
+  // Everyone is proficient with Simple weapons
+  if (!isMartial) return true;
+  
+  // Check for Martial proficiency from classes
+  const characterClasses = character.classes || [];
+  const classNames = characterClasses.map(c => c.definition?.name || c.class || '');
+  
+  // Full Martial proficiency classes
+  const fullMartialClasses = ['Barbarian', 'Fighter', 'Paladin', 'Ranger'];
+  if (classNames.some(name => fullMartialClasses.includes(name))) {
+    return true;
+  }
+  
+  // Partial Martial proficiency: Rogue and Monk
+  const hasRogue = classNames.includes('Rogue');
+  const hasMonk = classNames.includes('Monk');
+  
+  if (hasRogue || hasMonk) {
+    const properties = weapon.raw_data?.properties || [];
+    const propertyNames = properties.map(p => p.name || p);
+    
+    const hasLight = propertyNames.includes('Light');
+    const hasFinesse = propertyNames.includes('Finesse');
+    
+    // Monk: proficient with Light Martial weapons
+    if (hasMonk && hasLight) return true;
+    
+    // Rogue: proficient with Light or Finesse Martial weapons
+    if (hasRogue && (hasLight || hasFinesse)) return true;
+  }
+  
+  return false;
+};
+
+/**
+ * Armor proficiency levels (hierarchical)
+ * Higher levels include all lower levels
+ */
+const ARMOR_PROFICIENCY_LEVELS = {
+  none: 0,
+  light: 1,
+  medium: 2,
+  heavy: 3
+};
+
+/**
+ * Get base armor proficiency level from character classes
+ * 
+ * @param {Object} character - Character object with classes array
+ * @returns {number} - Proficiency level (0=none, 1=light, 2=medium, 3=heavy)
+ */
+const getBaseArmorProficiency = (character) => {
+  if (!character?.classes) return ARMOR_PROFICIENCY_LEVELS.none;
+  
+  const classNames = character.classes.map(c => c.definition?.name || c.class || '');
+  
+  // Heavy armor proficiency (includes all lower)
+  if (classNames.some(name => ['Fighter', 'Paladin'].includes(name))) {
+    return ARMOR_PROFICIENCY_LEVELS.heavy;
+  }
+  
+  // Medium armor proficiency (includes light)
+  if (classNames.some(name => ['Barbarian', 'Cleric', 'Ranger'].includes(name))) {
+    return ARMOR_PROFICIENCY_LEVELS.medium;
+  }
+  
+  // Light armor proficiency only
+  if (classNames.some(name => ['Bard', 'Druid', 'Rogue', 'Warlock'].includes(name))) {
+    return ARMOR_PROFICIENCY_LEVELS.light;
+  }
+  
+  // No armor proficiency
+  return ARMOR_PROFICIENCY_LEVELS.none;
+};
+
+/**
+ * Get base shield proficiency from character classes
+ * 
+ * @param {Object} character - Character object with classes array
+ * @returns {boolean} - True if proficient with shields
+ */
+const getBaseShieldProficiency = (character) => {
+  if (!character?.classes) return false;
+  
+  const classNames = character.classes.map(c => c.definition?.name || c.class || '');
+  
+  // Classes with shield proficiency
+  return classNames.some(name => 
+    ['Barbarian', 'Cleric', 'Druid', 'Fighter', 'Paladin', 'Ranger'].includes(name)
+  );
+};
+
+/**
+ * Check armor proficiency with bonus engine extensibility
+ * 
+ * @param {Object} armor - Armor equipment object
+ * @param {Object} character - Character object
+ * @param {Array} features - Character features (for bonus engine checks)
+ * @returns {boolean} - True if proficient
+ */
+const isArmorProficient = (armor, character, features = []) => {
+  if (!armor || !character) return false;
+  
+  // Get armor type level
+  const armorTypeId = armor.armorTypeId;
+  let armorLevel = ARMOR_PROFICIENCY_LEVELS.none;
+  
+  if (armorTypeId === 1) armorLevel = ARMOR_PROFICIENCY_LEVELS.light;
+  else if (armorTypeId === 2) armorLevel = ARMOR_PROFICIENCY_LEVELS.medium;
+  else if (armorTypeId === 3) armorLevel = ARMOR_PROFICIENCY_LEVELS.heavy;
+  else {
+    // Fallback: detect from armor_class properties
+    const rawData = armor.raw_data;
+    if (rawData?.armor_class) {
+      const { dex_bonus, max_bonus } = rawData.armor_class;
+      if (!dex_bonus) armorLevel = ARMOR_PROFICIENCY_LEVELS.heavy;
+      else if (max_bonus !== undefined && max_bonus !== null) armorLevel = ARMOR_PROFICIENCY_LEVELS.medium;
+      else armorLevel = ARMOR_PROFICIENCY_LEVELS.light;
+    }
+  }
+  
+  // Get base proficiency from class
+  let proficiencyLevel = getBaseArmorProficiency(character);
+  
+  // Check for feature-granted armor proficiency upgrades
+  for (const feature of features) {
+    if (!Array.isArray(feature.benefits)) continue;
+    for (const benefit of feature.benefits) {
+      if (benefit.type === 'armor_proficiency' && benefit.level) {
+        const grantedLevel = ARMOR_PROFICIENCY_LEVELS[benefit.level] || 0;
+        proficiencyLevel = Math.max(proficiencyLevel, grantedLevel);
+      }
+    }
+  }
+  
+  // Character is proficient if their level meets or exceeds the armor level
+  return proficiencyLevel >= armorLevel;
+};
+
+/**
+ * Check shield proficiency with bonus engine extensibility
+ * 
+ * @param {Object} character - Character object
+ * @param {Array} features - Character features (for bonus engine checks)
+ * @returns {boolean} - True if proficient
+ */
+const isShieldProficient = (character, features = []) => {
+  if (!character) return false;
+  
+  // Get base shield proficiency from class
+  let isProficient = getBaseShieldProficiency(character);
+  
+  // Check for feature-granted shield proficiency
+  for (const feature of features) {
+    if (!Array.isArray(feature.benefits)) continue;
+    for (const benefit of feature.benefits) {
+      if (benefit.type === 'shield_proficiency' && benefit.value === true) {
+        isProficient = true;
+        break;
+      }
+    }
+    if (isProficient) break;
+  }
+  
+  return isProficient;
 };
 
 const sortItemsByRarityAndName = (items) => {
@@ -146,8 +342,8 @@ const sortItemsByRarityAndName = (items) => {
     }
     
     // Then alphabetically by name
-    const nameA = (a.magic_item?.name || a.equipment?.name || '').toLowerCase();
-    const nameB = (b.magic_item?.name || b.equipment?.name || '').toLowerCase();
+    const nameA = (a.magic_item?.name || a.equipment?.name || a.trinket_name || '').toLowerCase();
+    const nameB = (b.magic_item?.name || b.equipment?.name || b.trinket_name || '').toLowerCase();
     return nameA.localeCompare(nameB);
   });
 };
@@ -155,9 +351,15 @@ const sortItemsByRarityAndName = (items) => {
 const getItemFilter = (item) => {
   if (!item) return 'Gear';
   if (item.magic_item) return 'Magic';
+  if (item.trinket_name) return 'Trinkets';
   if (item.equipment?.type?.toLowerCase().includes('weapon')) return 'Weapons';
-  if (item.equipment?.type?.toLowerCase().includes('armor')) return 'Armor';
+  if (item.equipment?.type?.toLowerCase().includes('armor')) return 'Armour';
   return 'Gear';
+};
+
+const getInventoryEquipmentData = (item) => {
+  if (!item) return null;
+  return item.equipment || item.magic_item?.equipment || null;
 };
 
 const getCustomPockets = (items = []) => {
@@ -172,9 +374,113 @@ const getCustomPockets = (items = []) => {
   });
   return [...pockets].sort();
 };
+
+const normalizeBenefitsInput = (benefits) => {
+  if (Array.isArray(benefits)) return benefits;
+  if (benefits && typeof benefits === 'object' && benefits.type) return [benefits];
+  if (typeof benefits === 'string') {
+    try {
+      const parsed = JSON.parse(benefits);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === 'object' && parsed.type) return [parsed];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+const evaluatePoolFormula = (formula, level, abilityModifiers = {}) => {
+  if (!formula || typeof formula !== 'string') return 0;
+
+  let normalizedFormula = formula.toLowerCase().trim();
+  const abilities = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+
+  abilities.forEach((ability) => {
+    const value = Number(abilityModifiers?.[ability]) || 0;
+    const pattern = new RegExp(`\\b${ability}\\b`, 'gi');
+    normalizedFormula = normalizedFormula.replace(pattern, value.toString());
+  });
+
+  normalizedFormula = normalizedFormula.replace(/\blevel\b/gi, String(level || 1));
+
+  try {
+    if (!/^[\d+\-*/().\s]+$/.test(normalizedFormula)) return 0;
+    const result = Function(`"use strict"; return (${normalizedFormula})`)();
+    if (typeof result === 'number' && Number.isFinite(result)) {
+      return Math.max(0, Math.floor(result));
+    }
+  } catch {
+    return 0;
+  }
+
+  return 0;
+};
+
+const getFeaturePool = (feature, characterLevel, abilityModifiers) => {
+  const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
+  const poolBenefit = benefits.find((benefit) => String(benefit?.type || '').toLowerCase().trim() === 'pool');
+  if (!poolBenefit) return null;
+
+  let poolMax = 0;
+  if (poolBenefit?.value === 'formula' && poolBenefit?.formula) {
+    poolMax = evaluatePoolFormula(poolBenefit.formula, characterLevel, abilityModifiers);
+  } else {
+    poolMax = Math.max(0, Number(poolBenefit?.value) || 0);
+  }
+
+  if (poolMax <= 0) return null;
+
+  return {
+    name: poolBenefit?.name || null,
+    max: poolMax
+  };
+};
+
 const isFeatureToggleIgnored = (target) => {
   if (!target || typeof target.closest !== 'function') return false;
-  return Boolean(target.closest('.uses-counter, .uses-boxes, .uses-btn, .use-box, .uses-reset'));
+  return Boolean(target.closest('.uses-counter, .uses-boxes, .uses-btn, .use-box, .uses-reset, .pool-tracker, .pool-btn, .pool-input, .pool-reset'));
+};
+
+/**
+ * Stance state management helpers
+ * Stances are mutually exclusive toggle systems stored per character+feature in localStorage
+ */
+const getActiveStance = (characterId, featureId) => {
+  if (!characterId || !featureId) return null;
+  try {
+    const key = `stance_${characterId}_${featureId}`;
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+};
+
+const setActiveStance = (characterId, featureId, stanceName) => {
+  if (!characterId || !featureId) return;
+  try {
+    const key = `stance_${characterId}_${featureId}`;
+    if (stanceName) {
+      localStorage.setItem(key, JSON.stringify(stanceName));
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage errors (private mode or quota exceeded)
+  }
+};
+
+const getStanceBenefits = (feature, activeStance) => {
+  if (!feature || !activeStance) return [];
+  
+  const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
+  const stanceBenefit = benefits.find(b => b.type === 'stance');
+  
+  if (!stanceBenefit || !Array.isArray(stanceBenefit.stances)) return [];
+  
+  const stance = stanceBenefit.stances.find(s => s.name === activeStance);
+  return stance?.benefits || [];
 };
 
 function FeatureDescriptionBlock({ featureId, description, expanded, onToggle }) {
@@ -221,9 +527,11 @@ function CharacterSheet() {
     loading,
     relatedLoading,
     error,
-    refetchInventory
+    refetchInventory,
+    refetchSpells,
+    updateCharacterFields
   } = useCharacter({ user, isAdmin });
-  const [activeTab, setActiveTab] = useState('abilities'); // abilities, skills, actions, spells, inventory, features, bio, creatures
+  const [activeTab, setActiveTab] = useState('bio'); // bio, abilities, skills, actions, spells, inventory, features, creatures
   const activeTabRef = useRef(activeTab);
   const [emblaRef, emblaApi] = useEmblaCarousel({
     align: 'start',
@@ -238,6 +546,8 @@ function CharacterSheet() {
   const [isHPModalOpen, setIsHPModalOpen] = useState(false);
   const [damageInput, setDamageInput] = useState('');
   const [isPortraitHighlighted, setIsPortraitHighlighted] = useState(true);
+  const [isLongRestConfirmOpen, setIsLongRestConfirmOpen] = useState(false);
+  const [longRestVersion, setLongRestVersion] = useState(0);
 
   // Stats Inspector Modal state
   const [inspectorState, setInspectorState] = useState({
@@ -261,6 +571,23 @@ function CharacterSheet() {
   const [newPocketItemId, setNewPocketItemId] = useState(null);
   const [activePocket, setActivePocket] = useState('all');
 
+  // Feature uses & expanded descriptions (shared between FeaturesTab and ActionsTab)
+  const [usesState, setUsesState] = useState({});
+  const [expandedDescriptions, setExpandedDescriptions] = useState({});
+  const [usesLoaded, setUsesLoaded] = useState(false);
+
+  // Feature pool trackers (e.g., Lay on Hands)
+  const [poolState, setPoolState] = useState({});
+  const [poolLoaded, setPoolLoaded] = useState(false);
+
+  // Spell uses (shared between SpellsTab and ActionsTab)
+  const [spellUses, setSpellUses] = useState({});
+  const [spellUsesLoaded, setSpellUsesLoaded] = useState(false);
+
+  // Active stances for stance-type features (stored in localStorage)
+  const [activeStances, setActiveStances] = useState({});
+  const [activeStancesLoaded, setActiveStancesLoaded] = useState(false);
+
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
@@ -282,6 +609,210 @@ function CharacterSheet() {
       emblaApi.off('reInit', handleSelect);
     };
   }, [emblaApi]);
+
+  // Feature uses localStorage management
+  const usesStorageKey = character?.id
+    ? `feature-uses:${character.id}`
+    : null;
+
+  useEffect(() => {
+    if (!usesStorageKey) return;
+    try {
+      const stored = localStorage.getItem(usesStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          setUsesState(parsed);
+          setUsesLoaded(true);
+          return;
+        }
+      }
+      setUsesState({});
+    } catch {
+      setUsesState({});
+    }
+    setUsesLoaded(true);
+  }, [usesStorageKey]);
+
+  useEffect(() => {
+    if (!usesStorageKey) return;
+    if (!usesLoaded) return;
+    try {
+      localStorage.setItem(usesStorageKey, JSON.stringify(usesState));
+    } catch {
+      // Ignore storage write errors (private mode or quota exceeded)
+    }
+  }, [usesState, usesStorageKey, usesLoaded]);
+
+  // Spell uses localStorage management
+  const spellUsesStorageKey = character?.id
+    ? `spellUses:${character.id}`
+    : null;
+
+  useEffect(() => {
+    if (!spellUsesStorageKey) return;
+    try {
+      const stored = localStorage.getItem(spellUsesStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          setSpellUses(parsed);
+          setSpellUsesLoaded(true);
+          return;
+        }
+      }
+      setSpellUses({});
+    } catch {
+      setSpellUses({});
+    }
+    setSpellUsesLoaded(true);
+  }, [spellUsesStorageKey]);
+
+  useEffect(() => {
+    if (!spellUsesStorageKey) return;
+    if (!spellUsesLoaded) return;
+    try {
+      localStorage.setItem(spellUsesStorageKey, JSON.stringify(spellUses));
+    } catch {
+      // Ignore storage write errors (private mode or quota exceeded)
+    }
+  }, [spellUses, spellUsesStorageKey, spellUsesLoaded]);
+
+  const handleUsesChange = (featureId, newUses) => {
+    setUsesState(prev => ({ ...prev, [featureId]: newUses }));
+  };
+
+  // Feature pools localStorage management
+  const poolStorageKey = character?.id
+    ? `feature-pools:${character.id}`
+    : null;
+
+  useEffect(() => {
+    if (!poolStorageKey) return;
+    try {
+      const stored = localStorage.getItem(poolStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          setPoolState(parsed);
+          setPoolLoaded(true);
+          return;
+        }
+      }
+      setPoolState({});
+    } catch {
+      setPoolState({});
+    }
+    setPoolLoaded(true);
+  }, [poolStorageKey]);
+
+  useEffect(() => {
+    if (!poolStorageKey || !poolLoaded) return;
+    try {
+      localStorage.setItem(poolStorageKey, JSON.stringify(poolState));
+    } catch {
+      // Ignore storage write errors
+    }
+  }, [poolStorageKey, poolLoaded, poolState]);
+
+  const handlePoolChange = (poolId, newValue) => {
+    setPoolState((prev) => ({ ...prev, [poolId]: newValue }));
+  };
+
+  const handleSpellUsesChange = (spellId, newUses) => {
+    setSpellUses(prev => ({ ...prev, [spellId]: newUses }));
+  };
+
+  const performLongRest = () => {
+    if (!character) return;
+
+    // Reset HP state
+    setCurrentHP(effectiveDisplayMaxHP);
+    setTempHP(0);
+
+    // Reset feature uses and spell uses tracked in CharacterSheet
+    setUsesState({});
+    setSpellUses({});
+
+    // Clear persisted states so all tabs rehydrate cleanly
+    if (character.id) {
+      localStorage.removeItem(`hp_state_${character.id}`);
+      localStorage.removeItem(`feature-uses:${character.id}`);
+      localStorage.removeItem(`spellUses:${character.id}`);
+      localStorage.removeItem(`spellSlotsUsed:${character.id}`);
+
+      // Reset magic item charges/uses
+      (character.inventory || []).forEach((invItem) => {
+        if (invItem?.id) {
+          localStorage.removeItem(`item_uses_${character.id}_${invItem.id}`);
+        }
+      });
+    }
+    if (character.name) {
+      localStorage.removeItem(`spellSlotsUsed:${character.name}`);
+    }
+
+    // Signal SpellsTab to reset its internal slot state immediately
+    setLongRestVersion((prev) => prev + 1);
+
+    // Signal inventory and item modal to reset in-memory item use counters
+    window.dispatchEvent(new CustomEvent('longRestPerformed', {
+      detail: { characterId: character.id }
+    }));
+
+    setIsLongRestConfirmOpen(false);
+  };
+
+  // Active stances localStorage management
+  const stancesStorageKey = character?.id
+    ? `feature-stances:${character.id}`
+    : null;
+
+  useEffect(() => {
+    if (!stancesStorageKey) return;
+    try {
+      const stored = localStorage.getItem(stancesStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          setActiveStances(parsed);
+          setActiveStancesLoaded(true);
+          return;
+        }
+      }
+      setActiveStances({});
+    } catch {
+      setActiveStances({});
+    }
+    setActiveStancesLoaded(true);
+  }, [stancesStorageKey]);
+
+  useEffect(() => {
+    if (!stancesStorageKey || !activeStancesLoaded) return;
+    try {
+      localStorage.setItem(stancesStorageKey, JSON.stringify(activeStances));
+    } catch {
+      // Ignore storage write errors (private mode or quota exceeded)
+    }
+  }, [activeStances, stancesStorageKey, activeStancesLoaded]);
+
+  const handleStanceChange = (featureId, stanceName) => {
+    setActiveStances(prev => {
+      return { ...prev, [featureId]: stanceName };
+    });
+  };
+
+  const handleDescriptionToggle = (featureId) => {
+    setExpandedDescriptions(prev => ({
+      ...prev,
+      [featureId]: !prev[featureId]
+    }));
+  };
+
+  const handleBastionStatUpdate = async (statKey, value) => {
+    if (!character?.id) return;
+    await updateCharacterFields({ [statKey]: value });
+  };
 
   const setActiveTabWithCarousel = (nextTab) => {
     if (!nextTab || nextTab === activeTabRef.current) return;
@@ -365,7 +896,10 @@ function CharacterSheet() {
     if (character?.current_hp !== undefined) {
       setCurrentHP(character.current_hp);
     } else if (character?.max_hp) {
-      setCurrentHP(character.max_hp);
+      const level = Math.max(1, Number(character?.level) || 1);
+      const conMod = Math.floor(((Number(character?.constitution) || 10) - 10) / 2);
+      const effectiveBaseMaxHP = Number(character.max_hp) + (conMod * level);
+      setCurrentHP(effectiveBaseMaxHP);
     }
     setTempHP(0);
     setMaxHPModifier(0);
@@ -405,11 +939,80 @@ function CharacterSheet() {
     }
   };
 
+  // Calculate proficiency bonus and base abilities BEFORE early returns (needed for hooks)
+  const proficiencyBonus = character?.level ? Math.ceil(character.level / 4) + 1 : 2;
+  const abilityModifier = (score) => Math.floor((score - 10) / 2);
+  
+  // Memoize baseAbilities to avoid unnecessary re-renders in dependent hooks
+  const baseAbilities = useMemo(() => {
+    if (!character) {
+      return {
+        strength: 10,
+        dexterity: 10,
+        constitution: 10,
+        intelligence: 10,
+        wisdom: 10,
+        charisma: 10
+      };
+    }
+    return {
+      strength: character.strength,
+      dexterity: character.dexterity,
+      constitution: character.constitution,
+      intelligence: character.intelligence,
+      wisdom: character.wisdom,
+      charisma: character.charisma
+    };
+  }, [character?.strength, character?.dexterity, character?.constitution, 
+      character?.intelligence, character?.wisdom, character?.charisma]);
+
+  // Collect active stance benefits (must be before early returns)
+  const stanceBonuses = useMemo(() => {
+    if (!activeStancesLoaded || !character?.features) return [];
+    
+    const stances = character.features
+      .filter(f => f && f.benefits)
+      .map(f => {
+        const benefits = normalizeBenefitsInput(f.benefits ?? f.benefit);
+        const hasStance = benefits.some(b => b.type === 'stance');
+        return hasStance ? f : null;
+      })
+      .filter(Boolean);
+    
+    const allStanceBenefits = stances.flatMap(feature => {
+      const activeStance = activeStances[feature.id];
+      
+      if (!activeStance) return [];
+      
+      const stanceBenefits = getStanceBenefits(feature, activeStance);
+      if (!stanceBenefits.length) return [];
+      
+      const pseudoFeature = { ...feature, benefits: stanceBenefits };
+      
+      const collected = collectBonuses({
+        items: [],
+        features: [pseudoFeature],
+        baseCharacterData: {
+          ...baseAbilities,
+          level: Math.max(1, Number(character?.level) || 1),
+          classes: Array.isArray(character?.classes) ? character.classes : [],
+          proficiency: proficiencyBonus,
+          shield_bonus: 0
+        },
+        overrides: []
+      }) || [];
+      return collected;
+    });
+
+    return allStanceBenefits;
+  }, [activeStances, activeStancesLoaded, character?.features, baseAbilities, proficiencyBonus]);
+
+  // Show loading screen only while character data is loading
+  // Textures load in background via TexturePreloader at app root
   if (loading) {
     return (
       <div className="route-loading">
         <img src="/crest.png" alt="" className="loading-crest" />
-        <span className="loading-text">Loading character sheet...</span>
       </div>
     );
   }
@@ -430,18 +1033,7 @@ function CharacterSheet() {
   const skills = character.skills || [];
   const spells = character.spells || [];
 
-  const proficiencyBonus = Math.ceil(character.level / 4) + 1;
-  const abilityModifier = (score) => Math.floor((score - 10) / 2);
-
-  const baseAbilities = {
-    strength: character.strength,
-    dexterity: character.dexterity,
-    constitution: character.constitution,
-    intelligence: character.intelligence,
-    wisdom: character.wisdom,
-    charisma: character.charisma
-  };
-
+  // baseMods uses the baseAbilities and abilityModifier defined before early returns
   const baseMods = {
     strength: abilityModifier(baseAbilities.strength),
     dexterity: abilityModifier(baseAbilities.dexterity),
@@ -451,18 +1043,20 @@ function CharacterSheet() {
     charisma: abilityModifier(baseAbilities.charisma)
   };
 
-  // Convert ASIs to bonuses
-  const abilityScoreBonuses = convertAbilityScoresToBonuses(character.ability_score_improvements || []);
+  // Convert ASIs to bonuses (character-level ASIs + feat-choice ASIs)
+  const featChoiceImprovements = extractFeatAbilityScoreImprovements(character.feats || []);
+  const allAbilityImprovements = [...(character.ability_score_improvements || []), ...featChoiceImprovements];
+  const abilityScoreBonuses = convertAbilityScoresToBonuses(allAbilityImprovements);
 
   // Helper to calculate base AC from equipped armor
-  const calculateBaseAC = (inventory, dexModifier) => {
+  const calculateBaseAC = (inventory, dexModifier, character, features) => {
     if (!inventory || !Array.isArray(inventory)) {
       return 10 + dexModifier; // Unarmored
     }
 
     // Helper to check if item is a shield
     const isShield = (item) => {
-      const itemData = item.equipment || item.magic_item;
+      const itemData = getInventoryEquipmentData(item);
       if (!itemData?.raw_data) return false;
       const rawData = typeof itemData.raw_data === 'string' ? JSON.parse(itemData.raw_data) : itemData.raw_data;
       return rawData?.equipment_categories?.some(cat => cat.index === 'shields');
@@ -474,7 +1068,7 @@ function CharacterSheet() {
       if (isShield(item)) return false; // Exclude shields
       
       // Check if it's armor (either equipment or magic item)
-      const itemData = item.equipment || item.magic_item;
+      const itemData = getInventoryEquipmentData(item);
       if (!itemData) return false;
       
       const type = itemData.type?.toLowerCase() || '';
@@ -491,7 +1085,7 @@ function CharacterSheet() {
       baseAC = 10 + dexModifier; // Unarmored
     } else {
       // Get armor data (prefer equipment, fallback to magic_item)
-      const armorData = equippedArmor.equipment || equippedArmor.magic_item;
+      const armorData = getInventoryEquipmentData(equippedArmor);
       const rawData = armorData?.raw_data;
       
       if (!rawData?.armor_class) {
@@ -513,23 +1107,46 @@ function CharacterSheet() {
       }
     }
 
-    // Add shield bonus
+    // Add shield bonus ONLY if proficient
     if (equippedShield) {
-      const shieldData = equippedShield.equipment || equippedShield.magic_item;
+      const shieldData = getInventoryEquipmentData(equippedShield);
       const shieldAC = shieldData?.raw_data?.armor_class?.base || 0;
-      baseAC += shieldAC;
+      
+      // Check shield proficiency - only add AC if proficient
+      if (isShieldProficient(character, features)) {
+        baseAC += shieldAC;
+      }
     }
 
     return baseAC;
   };
 
+  // Shield bonus that AC override formulas can optionally include
+  const getEquippedShieldBonus = (inventory, character, features) => {
+    if (!Array.isArray(inventory)) return 0;
+
+    const isShield = (item) => {
+      const itemData = getInventoryEquipmentData(item);
+      if (!itemData?.raw_data) return false;
+      const rawData = typeof itemData.raw_data === 'string' ? JSON.parse(itemData.raw_data) : itemData.raw_data;
+      return rawData?.equipment_categories?.some(cat => cat.index === 'shields');
+    };
+
+    const equippedShield = inventory.find(item => item.equipped && isShield(item));
+    if (!equippedShield) return 0;
+    if (!isShieldProficient(character, features)) return 0;
+
+    const shieldData = getInventoryEquipmentData(equippedShield);
+    return Number(shieldData?.raw_data?.armor_class?.base) || 0;
+  };
+
   // Helper to get armor info for AC Inspector display
-  const getArmorInfo = (inventory, dexModifier) => {
+  const getArmorInfo = (inventory, dexModifier, character, features) => {
     if (!inventory || !Array.isArray(inventory)) return null;
 
     // Helper to check if item is a shield
     const isShield = (item) => {
-      const itemData = item.equipment || item.magic_item;
+      const itemData = getInventoryEquipmentData(item);
       if (!itemData?.raw_data) return false;
       const rawData = typeof itemData.raw_data === 'string' ? JSON.parse(itemData.raw_data) : itemData.raw_data;
       return rawData?.equipment_categories?.some(cat => cat.index === 'shields');
@@ -539,7 +1156,7 @@ function CharacterSheet() {
     const equippedArmor = inventory.find(item => {
       if (!item.equipped) return false;
       if (isShield(item)) return false; // Exclude shields
-      const itemData = item.equipment || item.magic_item;
+      const itemData = getInventoryEquipmentData(item);
       if (!itemData) return false;
       const type = itemData.type?.toLowerCase() || '';
       const hasArmorTypeId = itemData.armorTypeId !== null && itemData.armorTypeId !== undefined;
@@ -551,7 +1168,7 @@ function CharacterSheet() {
 
     let armorInfo = null;
     if (equippedArmor) {
-      const armorData = equippedArmor.equipment || equippedArmor.magic_item;
+      const armorData = getInventoryEquipmentData(equippedArmor);
       const rawData = armorData?.raw_data;
       
       if (rawData?.armor_class) {
@@ -559,12 +1176,12 @@ function CharacterSheet() {
         
         // Determine armor type
         let armorType = 'Unknown';
-        if (armorData.armorTypeId === 1) armorType = 'Light Armor';
-        else if (armorData.armorTypeId === 2) armorType = 'Medium Armor';
-        else if (armorData.armorTypeId === 3) armorType = 'Heavy Armor';
-        else if (!dex_bonus) armorType = 'Heavy Armor';
-        else if (max_bonus !== undefined && max_bonus !== null) armorType = 'Medium Armor';
-        else armorType = 'Light Armor';
+        if (armorData.armorTypeId === 1) armorType = 'Light Armour';
+        else if (armorData.armorTypeId === 2) armorType = 'Medium Armour';
+        else if (armorData.armorTypeId === 3) armorType = 'Heavy Armour';
+        else if (!dex_bonus) armorType = 'Heavy Armour';
+        else if (max_bonus !== undefined && max_bonus !== null) armorType = 'Medium Armour';
+        else armorType = 'Light Armour';
 
         // Calculate actual DEX bonus applied
         let appliedDexBonus = null;
@@ -587,15 +1204,19 @@ function CharacterSheet() {
       }
     }
 
-    // Add shield info
+    // Add shield info with proficiency check
     let shieldBonus = null;
     if (equippedShield) {
-      const shieldData = equippedShield.equipment || equippedShield.magic_item;
+      const shieldData = getInventoryEquipmentData(equippedShield);
       const shieldAC = shieldData?.raw_data?.armor_class?.base;
+      const shieldProficient = isShieldProficient(character, features);
+      
       if (shieldAC) {
         shieldBonus = {
           name: shieldData.name,
-          bonus: shieldAC
+          bonus: shieldAC,
+          proficient: shieldProficient,
+          appliedBonus: shieldProficient ? shieldAC : 0 // Only applied if proficient
         };
       }
     }
@@ -609,20 +1230,56 @@ function CharacterSheet() {
     };
   };
 
+  // Extract attuned magic items from inventory for bonus processing
+  const attunedMagicItems = (() => {
+    if (!Array.isArray(character.inventory)) return [];
+    return character.inventory
+      .filter(invItem => invItem?.attuned && invItem?.magic_item)
+      .map(invItem => invItem.magic_item);
+  })();
+
   // Collect bonuses from items, features, and character overrides
   // (Skill bonuses are now handled directly in SkillsTab from feature.benefits)
+  const normalizedFeatsForBonuses = (character.feats || [])
+    .map((featEntry) => {
+      const joinedFeat = getJoinedFeat(featEntry);
+      if (!joinedFeat) {
+        console.warn('[CharacterSheet] Feat entry missing joined feat object:', featEntry);
+        return null;
+      }
+
+      return {
+        id: joinedFeat.id || featEntry.feat_id || featEntry.id,
+        name: joinedFeat.name || featEntry.name || 'Feat',
+        benefits: joinedFeat.benefits ?? featEntry.benefits ?? [],
+        source: featEntry.source || null
+      };
+    })
+    .filter(Boolean);
+
+  const featuresToProcess = [...(character.features || []), ...normalizedFeatsForBonuses];
+  
   const bonusList = collectBonuses({
-    items: character.items || [],
-    features: character.features || [],
-    baseCharacterData: baseAbilities,
+    items: [...(character.items || []), ...attunedMagicItems],
+    features: featuresToProcess,
+    baseCharacterData: {
+      ...baseAbilities,
+      level: Math.max(1, Number(character?.level) || 1),
+      classes: Array.isArray(character?.classes) ? character.classes : [],
+      proficiency: proficiencyBonus,
+      shield_bonus: getEquippedShieldBonus(character.inventory, character, character.features || [])
+    },
     overrides: character.bonuses || []
-  });
+  }) || [];
 
   // Combine all bonuses (from features + ASIs)
-  const allBonuses = [...bonusList, ...abilityScoreBonuses];
+  const baseBonuses = [...bonusList, ...abilityScoreBonuses];
 
-  // Calculate base AC from equipped armor
-  const baseAC = calculateBaseAC(character.inventory, baseMods.dexterity);
+  // Combine all bonuses (from features + ASIs + active stances)
+  const allBonuses = [...baseBonuses, ...stanceBonuses];
+
+  // Calculate base AC from equipped armor (with proficiency checks)
+  const baseAC = calculateBaseAC(character.inventory, baseMods.dexterity, character, character.features || []);
 
   // Derive character stats using bonus engine
   const { derived: derivedStats, totals: statsTotals } = deriveCharacterStats({
@@ -634,7 +1291,7 @@ function CharacterSheet() {
       initiativeBase: baseMods.dexterity,
       passivePerceptionBase: 10 + baseMods.wisdom,
       senses: character.senses || [],
-      speeds: character.speeds || { walk: character.speed }
+      speeds: character.speeds || {}
     },
     bonuses: allBonuses
   });
@@ -670,6 +1327,14 @@ function CharacterSheet() {
   const intMod = calculateModifier(intScore);
   const wisMod = calculateModifier(wisScore);
   const chaMod = calculateModifier(chaScore);
+  const characterLevel = Math.max(1, Number(character.level) || 1);
+  
+  // HP formula: character.max_hp + (level * con_mod) + bonuses from bonus engine
+  const baseMaxHP = Number(character.max_hp) || 0;
+  const conModBonus = conMod * characterLevel;
+  const effectiveBaseMaxHP = baseMaxHP + conModBonus;
+  const hpBonusesFromFeatures = allBonuses.filter(b => b.target === 'maxHP').reduce((sum, b) => sum + b.value, 0);
+  const effectiveDisplayMaxHP = baseMaxHP + conModBonus + hpBonusesFromFeatures + maxHPModifier;
 
   // These ARE derived modifiers (calculated from derived scores with bonuses applied)
   // Safe to use everywhere - includes all feature bonuses
@@ -695,9 +1360,7 @@ function CharacterSheet() {
   };
 
   const initiative = derivedStats.initiative;
-  const conditions = (character.conditions || []).map((condition) => (
-    typeof condition === 'string' ? { name: condition } : condition
-  ));
+  const campIconUrl = new URL('../assets/icons/location/camp.svg', import.meta.url).href;
 
   return (
     <div className="character-sheet">
@@ -737,28 +1400,16 @@ function CharacterSheet() {
               <span className="char-level">
                 Lvl {character.level} {character.classes.map(c => `${c.class}${c.subclass ? ` (${c.subclass})` : ''}`).join(' / ')}
               </span>
-              <div className="character-conditions clickable-underline">
-                <span className="conditions-label">Conditions:</span>
-                {conditions.length > 0 ? (
-                  <div className="conditions-icons">
-                    {conditions.map((condition) => (
-                      condition.icon ? (
-                        <img
-                          key={condition.name}
-                          src={condition.icon}
-                          alt={condition.name}
-                          className="condition-icon"
-                          title={condition.name}
-                        />
-                      ) : (
-                        <span key={condition.name} className="condition-text">{condition.name}</span>
-                      )
-                    ))}
-                  </div>
-                ) : (
-                  <span className="conditions-empty">None</span>
-                )}
-              </div>
+              <button
+                type="button"
+                className="long-rest-button clickable-underline"
+                onClick={() => setIsLongRestConfirmOpen(true)}
+                aria-label="Take a long rest"
+                title="Take a long rest"
+              >
+                <img src={campIconUrl} alt="" className="long-rest-icon" />
+                <span className="long-rest-label">Long Rest</span>
+              </button>
             </div>
           </div>
           <div className="header-right">
@@ -775,7 +1426,7 @@ function CharacterSheet() {
                   </span>
                   <span className="hp-total-separator">/</span>
                   <span className={maxHPModifier !== 0 ? 'hp-value-mod' : 'hp-value-current'}>
-                    {character.max_hp + maxHPModifier}
+                    {effectiveDisplayMaxHP}
                   </span>
                   {tempHP > 0 && (
                     <span className="hp-value-temp">+{tempHP}</span>
@@ -805,6 +1456,14 @@ function CharacterSheet() {
 
       {/* Tab Navigation */}
       <div className="tab-nav">
+        <button
+          className={activeTab === 'bio' ? 'tab-btn bio active' : 'tab-btn bio'}
+          onClick={() => setActiveTabWithCarousel('bio')}
+          aria-label="Bio"
+          title="Bio"
+        >
+          <span className="tab-icon tab-icon-book" aria-hidden="true"></span>
+        </button>
         <button
           className={activeTab === 'abilities' ? 'tab-btn abilities active' : 'tab-btn abilities'}
           onClick={() => setActiveTabWithCarousel('abilities')}
@@ -868,14 +1527,6 @@ function CharacterSheet() {
           </svg>
         </button>
         <button
-          className={activeTab === 'bio' ? 'tab-btn bio active' : 'tab-btn bio'}
-          onClick={() => setActiveTabWithCarousel('bio')}
-          aria-label="Bio"
-          title="Bio"
-        >
-          <span className="tab-icon tab-icon-book" aria-hidden="true"></span>
-        </button>
-        <button
           className={activeTab === 'creatures' ? 'tab-btn creatures active' : 'tab-btn creatures'}
           onClick={() => setActiveTabWithCarousel('creatures')}
           aria-label="Creatures"
@@ -891,6 +1542,9 @@ function CharacterSheet() {
           className="tab-carousel"
         >
           <div className="tab-pane">
+            <BioTab character={character} onBastionStatUpdate={handleBastionStatUpdate} />
+          </div>
+          <div className="tab-pane">
             <AbilitiesTab
               character={character}
               strMod={strMod}
@@ -902,11 +1556,13 @@ function CharacterSheet() {
               proficiencyBonus={proficiencyBonus}
               skills={skills}
               derivedStats={derivedStats}
+              statsTotals={statsTotals}
               allBonuses={allBonuses}
               getAbilityBonuses={getAbilityBonuses}
               inspectorState={inspectorState}
               setInspectorState={setInspectorState}
               baseAbilities={baseAbilities}
+              saveAdvantages={derivedStats?.advantages?.saves || {}}
             />
           </div>
           <div className="tab-pane">
@@ -917,13 +1573,38 @@ function CharacterSheet() {
               loading={relatedLoading}
               features={character.features || []}
               derivedMods={derivedMods}
+              skillAdvantages={derivedStats?.advantages?.skills || {}}
+              statsTotals={statsTotals}
             />
           </div>
           <div className="tab-pane">
-            <ActionsTab character={character} />
+            <ActionsTab 
+              character={character} 
+              proficiencyBonus={proficiencyBonus}
+              derivedMods={derivedMods}
+              allBonuses={allBonuses}
+              setSelectedItem={setSelectedItem}
+              usesState={usesState}
+              onUsesChange={handleUsesChange}
+              calculateMaxUses={calculateMaxUses}
+              abilityModifiers={derivedMods}
+              FeatureUsesTracker={FeatureUsesTracker}
+              spellUses={spellUses}
+              onSpellUsesChange={handleSpellUsesChange}
+            />
           </div>
           <div className="tab-pane">
-            <SpellsTab character={character} spells={spells} loading={relatedLoading} />
+            <SpellsTab 
+              character={character} 
+              spells={spells} 
+              loading={relatedLoading}
+              proficiencyBonus={proficiencyBonus}
+              derivedMods={derivedMods}
+              onSpellsUpdate={refetchSpells}
+              spellUses={spellUses}
+              onSpellUsesChange={handleSpellUsesChange}
+              longRestVersion={longRestVersion}
+            />
           </div>
           <div className="tab-pane">
             <InventoryTab 
@@ -935,13 +1616,26 @@ function CharacterSheet() {
             />
           </div>
           <div className="tab-pane">
-            <FeaturesTab character={character} proficiencyBonus={proficiencyBonus} abilityModifiers={derivedMods} />
+            <FeaturesTab 
+              character={character} 
+              proficiencyBonus={proficiencyBonus} 
+              abilityModifiers={derivedMods}
+              usesState={usesState}
+              poolState={poolState}
+              expandedDescriptions={expandedDescriptions}
+              onUsesChange={handleUsesChange}
+              onPoolChange={handlePoolChange}
+              onDescriptionToggle={handleDescriptionToggle}
+              activeStances={activeStances}
+              onStanceChange={handleStanceChange}
+            />
           </div>
           <div className="tab-pane">
-            <BioTab character={character} />
-          </div>
-          <div className="tab-pane">
-            <CreaturesTab character={character} />
+            <CreaturesTab
+              character={character}
+              proficiencyBonus={proficiencyBonus}
+              derivedMods={derivedMods}
+            />
           </div>
         </div>
       </div>
@@ -955,7 +1649,7 @@ function CharacterSheet() {
           setTempHP={setTempHP}
           maxHPModifier={maxHPModifier}
           setMaxHPModifier={setMaxHPModifier}
-          maxHP={character.max_hp}
+          maxHP={effectiveBaseMaxHP}
           damageInput={damageInput}
           setDamageInput={setDamageInput}
           isOpen={isHPModalOpen}
@@ -969,9 +1663,11 @@ function CharacterSheet() {
         onClose={() => setACInspectorOpen(false)}
         baseValue={baseAC}
         bonuses={allBonuses?.filter(b => b.target === 'ac') || []}
+        acOverrides={allBonuses?.filter(b => b.target === 'ac_override') || []}
+        abilityModifiers={derivedMods}
         customModifiers={acCustomModifiers}
         customOverride={acCustomOverride}
-        armorInfo={getArmorInfo(character.inventory, baseMods.dexterity)}
+        armorInfo={getArmorInfo(character.inventory, baseMods.dexterity, character, character.features || [])}
         dexModifier={baseMods.dexterity}
         onAddCustomModifier={(modifier) => {
           const updated = [...acCustomModifiers, modifier];
@@ -1090,6 +1786,7 @@ function CharacterSheet() {
         proficiencyBonus={proficiencyBonus}
         abilityModifiers={derivedMods}
         characterId={character?.id}
+        character={character}
       />
 
       {/* New Pocket Modal */}
@@ -1170,567 +1867,79 @@ function CharacterSheet() {
           </div>
         </div>
       )}
+
+      {isLongRestConfirmOpen && (
+        <div className="long-rest-modal-overlay" onClick={() => setIsLongRestConfirmOpen(false)}>
+          <div className="long-rest-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Take Long Rest?</h3>
+            <p>This will restore HP and reset spell slots and feature uses.</p>
+            <div className="long-rest-actions">
+              <button
+                type="button"
+                className="long-rest-cancel"
+                onClick={() => setIsLongRestConfirmOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="long-rest-confirm"
+                onClick={performLongRest}
+              >
+                Yes, Rest
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // Tab 1: Abilities, Saves, Passive Skills, Senses
-function AbilitiesTab({ character, strMod, dexMod, conMod, intMod, wisMod, chaMod, proficiencyBonus, skills, derivedStats, allBonuses, getAbilityBonuses, inspectorState, setInspectorState, baseAbilities }) {
-  // Helper to get custom modifier total for an ability
-  const getCustomModifierTotal = (abilityKey) => {
-    const mods = inspectorState.abilityCustomModifiers?.[abilityKey] || [];
-    return mods.reduce((sum, mod) => sum + mod.value, 0);
-  };
+// Tab 2: Skills (extracted to tabs/SkillsTab.jsx)
 
-  // Helper to get the final ability score (with override or calculated)
-  const getFinalAbilityScore = (abilityKey, baseScore) => {
-    const override = inspectorState.abilityCustomOverrides?.[abilityKey];
-    if (override !== null && override !== undefined) {
-      return override;
-    }
-    return baseScore + getCustomModifierTotal(abilityKey);
-  };
+// Tab 3: Spells (extracted to tabs/SpellsTab.jsx)
 
-  // Helper to determine glow state for an ability
-  const getGlowState = (abilityKey, baseScore) => {
-    const override = inspectorState.abilityCustomOverrides?.[abilityKey];
-    if (override !== null && override !== undefined) {
-      return 'glow-blue'; // Blue for override
-    }
-    const customModTotal = getCustomModifierTotal(abilityKey);
-    if (customModTotal > 0) {
-      return 'glow-green'; // Green for positive modifier
-    }
-    if (customModTotal < 0) {
-      return 'glow-red'; // Red for negative modifier
-    }
-    return ''; // No glow
-  };
-
-  const abilities = [
-    { name: 'Strength', abbr: 'STR', key: 'strength', baseScore: derivedStats?.abilities?.strength || character.strength, score: getFinalAbilityScore('strength', derivedStats?.abilities?.strength || character.strength), mod: strMod, save: character.save_strength },
-    { name: 'Dexterity', abbr: 'DEX', key: 'dexterity', baseScore: derivedStats?.abilities?.dexterity || character.dexterity, score: getFinalAbilityScore('dexterity', derivedStats?.abilities?.dexterity || character.dexterity), mod: dexMod, save: character.save_dexterity },
-    { name: 'Constitution', abbr: 'CON', key: 'constitution', baseScore: derivedStats?.abilities?.constitution || character.constitution, score: getFinalAbilityScore('constitution', derivedStats?.abilities?.constitution || character.constitution), mod: conMod, save: character.save_constitution },
-    { name: 'Intelligence', abbr: 'INT', key: 'intelligence', baseScore: derivedStats?.abilities?.intelligence || character.intelligence, score: getFinalAbilityScore('intelligence', derivedStats?.abilities?.intelligence || character.intelligence), mod: intMod, save: character.save_intelligence },
-    { name: 'Wisdom', abbr: 'WIS', key: 'wisdom', baseScore: derivedStats?.abilities?.wisdom || character.wisdom, score: getFinalAbilityScore('wisdom', derivedStats?.abilities?.wisdom || character.wisdom), mod: wisMod, save: character.save_wisdom },
-    { name: 'Charisma', abbr: 'CHA', key: 'charisma', baseScore: derivedStats?.abilities?.charisma || character.charisma, score: getFinalAbilityScore('charisma', derivedStats?.abilities?.charisma || character.charisma), mod: chaMod, save: character.save_charisma },
-  ].map(ability => ({
-    ...ability,
-    glowClass: getGlowState(ability.key, ability.baseScore)
-  }));
-
-  const abilityNameToKey = {
-    'Strength': 'strength',
-    'Dexterity': 'dexterity',
-    'Constitution': 'constitution',
-    'Intelligence': 'intelligence',
-    'Wisdom': 'wisdom',
-    'Charisma': 'charisma'
-  };
-
-  const handleAbilityClick = (ability) => {
-    const abilityKey = abilityNameToKey[ability.name];
-    const bonuses = getAbilityBonuses(allBonuses, abilityKey);
-
-    setInspectorState({
-      ...inspectorState,
-      isOpen: true,
-      selectedAbility: {
-        name: ability.name,
-        key: abilityKey,
-        baseValue: baseAbilities[abilityKey] || 10,
-        totalValue: ability.score,
-        bonuses: bonuses
-      }
-    });
-  };
-
-  const skillLookup = (skills || []).reduce((acc, skill) => {
-    acc[skill.skill_name] = skill;
-    return acc;
-  }, {});
-
-  const hasPassiveAdvantage = (skillName) => {
-    if (character?.passive_advantage_all) return true;
-    const advantageList = character?.passive_advantage_skills || character?.passive_advantages || [];
-    if (Array.isArray(advantageList) && advantageList.includes(skillName)) return true;
-    if (character?.passive_advantage && typeof character.passive_advantage === 'object') {
-      return Boolean(character.passive_advantage[skillName]);
-    }
-    return false;
-  };
-
-  const passiveSkillValue = (skillName, baseMod) => {
-    const skillEntry = skillLookup[skillName];
-    const isProficient = !!skillEntry;
-    const isExpertise = skillEntry?.expertise || false;
-    let bonus = baseMod;
-    if (isExpertise) {
-      bonus += proficiencyBonus * 2;
-    } else if (isProficient) {
-      bonus += proficiencyBonus;
-    }
-    const advantageBonus = hasPassiveAdvantage(skillName) ? 5 : 0;
-    return 10 + bonus + advantageBonus;
-  };
-
-  const senses = Array.isArray(derivedStats?.senses) ? derivedStats.senses : (Array.isArray(character?.senses) ? character.senses : []);
-  const speeds = derivedStats?.speeds && typeof derivedStats.speeds === 'object'
-    ? derivedStats.speeds
-    : (character?.speeds && typeof character.speeds === 'object'
-      ? character.speeds
-      : { walk: character?.speed });
-
-  return (
-    <div className="abilities-tab">
-      <section className="section">
-        <h2>Ability Scores</h2>
-        <div className="abilities-grid">
-          {abilities.map(ability => (
-            <div
-              key={ability.name}
-              className={`ability-card ${ability.glowClass}`}
-              onClick={() => handleAbilityClick(ability)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleAbilityClick(ability);
-                }
-              }}
-            >
-              <span className="ability-name">{ability.name}</span>
-              <div className="ability-values">
-                <span className="ability-score">{ability.score}</span>
-                <span className={`ability-modifier ${ability.mod >= 0 ? 'positive' : 'negative'}`}>
-                  {ability.mod >= 0 ? '+' : ''}{ability.mod}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="section">
-        <h2>Saving Throws</h2>
-        <div className="saves-list">
-          {[
-            abilities[0],
-            abilities[3],
-            abilities[1],
-            abilities[4],
-            abilities[2],
-            abilities[5]
-          ].map((ability) => {
-            const saveBonus = ability.mod + (ability.save ? proficiencyBonus : 0);
-            return (
-              <div key={ability.abbr} className="save-item">
-                <span className={ability.save ? 'proficient' : ''}>
-                  {ability.save && '● '}{ability.name}
-                </span>
-                <span className="save-bonus">{saveBonus >= 0 ? '+' : ''}{saveBonus}</span>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="section">
-        <h2>Passive Skills</h2>
-        <div className="passive-list">
-          <div className="passive-item">
-            <span>Passive Perception</span>
-            <span className="passive-value">{passiveSkillValue('Perception', wisMod)}</span>
-          </div>
-          <div className="passive-item">
-            <span>Passive Insight</span>
-            <span className="passive-value">{passiveSkillValue('Insight', wisMod)}</span>
-          </div>
-          <div className="passive-item">
-            <span>Passive Investigation</span>
-            <span className="passive-value">{passiveSkillValue('Investigation', intMod)}</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="section">
-        <h2>Senses & Speed</h2>
-        <div className="passive-list">
-          {senses.length > 0 && (
-            senses.map((sense) => (
-              <div key={`${sense.sense_type}-${sense.range}`} className="passive-item">
-                <span>{sense.sense_type?.replace(/(^.|\s.)/g, (m) => m.toUpperCase())}</span>
-                <span className="passive-value">{sense.range} ft</span>
-              </div>
-            ))
-          )}
-          {Object.entries(speeds).filter(([, value]) => value).map(([type, value]) => (
-            <div key={type} className="passive-item">
-              <span>{type === 'walk' ? 'Walking Speed' : `${type.charAt(0).toUpperCase()}${type.slice(1)} Speed`}</span>
-              <span className="passive-value">{value} ft</span>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-// Tab 2: Skills
-function SkillsTab({ character, proficiencyBonus, skills: characterSkills, loading, features, derivedMods }) {
-  /**
-   * Skill Proficiency Levels
-   * 
-   * Each skill has one of 4 proficiency states, determined by:
-   * 1. Character proficiency (from class/background/ASI)
-   * 2. Character expertise (doubled proficiency)
-   * 3. Feature-granted proficiency (e.g., from a feat or feature)
-   * 4. Feature-granted half-proficiency (add ⌊PB/2⌋ to unproficient skill)
-   */
-  const PROFICIENCY_LEVELS = {
-    expertise: {
-      key: 'expertise',
-      icon: 'expertise.svg',
-      display: 'Expertise',
-      description: 'Double proficiency bonus',
-      bonusMultiplier: (pb) => pb * 2
-    },
-    proficient: {
-      key: 'proficient',
-      icon: 'proficient.svg',
-      display: 'Proficient',
-      description: 'Normal proficiency bonus',
-      bonusMultiplier: (pb) => pb
-    },
-    half: {
-      key: 'half',
-      icon: 'half.svg',
-      display: 'Half Proficiency',
-      description: 'Half proficiency bonus (e.g., Jack of All Trades)',
-      bonusMultiplier: (pb) => Math.floor(pb / 2)
-    },
-    unskilled: {
-      key: 'unskilled',
-      icon: 'unskilled.svg',
-      display: 'Unskilled',
-      description: 'No proficiency bonus',
-      bonusMultiplier: (pb) => 0
-    }
-  };
-
-  // Build map of additional ability modifiers for skills
-  // Example: { history: ['charisma'], religion: ['charisma'] }
-  const skillAdditionalAbilitiesMap = {}; // { skillKey: [ability, ability, ...] }
-  
-  // Build set of skills that have proficiency from features
-  const skillProficienciesFromFeatures = new Set(); // Set of skillKeys
-  
-  // Check if character has skill_half_proficiency benefit (Jack of All Trades style)
-  let hasHalfProficiency = false;
-  
-  const normalizeBenefits = (rawBenefits) => {
-    if (Array.isArray(rawBenefits)) return rawBenefits;
-    if (rawBenefits && typeof rawBenefits === 'object') {
-      return rawBenefits.type ? [rawBenefits] : [];
-    }
-    if (typeof rawBenefits === 'string') {
-      try {
-        const parsed = JSON.parse(rawBenefits);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  };
-
-  features.forEach(feature => {
-    const benefitsList = normalizeBenefits(feature.benefits);
-    if (benefitsList.length > 0) {
-      benefitsList.forEach(benefit => {
-        const benefitType = typeof benefit?.type === 'string' ? benefit.type.trim() : benefit?.type;
-        // New format: skill_dual_ability
-        if (benefitType === 'skill_dual_ability' && Array.isArray(benefit.skills)) {
-          benefit.skills.forEach(skillName => {
-            const skillKey = skillName.toLowerCase().replace(/[\s']/g, '_');
-            if (!skillAdditionalAbilitiesMap[skillKey]) {
-              skillAdditionalAbilitiesMap[skillKey] = [];
-            }
-            if (benefit.ability && !skillAdditionalAbilitiesMap[skillKey].includes(benefit.ability)) {
-              skillAdditionalAbilitiesMap[skillKey].push(benefit.ability);
-            }
-          });
-        }
-        // Legacy format: skill_modifier_bonus (for backward compatibility)
-        else if (benefitType === 'skill_modifier_bonus' && Array.isArray(benefit.skills)) {
-          benefit.skills.forEach(skillName => {
-            const skillKey = skillName.toLowerCase().replace(/[\s']/g, '_');
-            if (!skillAdditionalAbilitiesMap[skillKey]) {
-              skillAdditionalAbilitiesMap[skillKey] = [];
-            }
-            // Extract ability from bonus_source like "charisma_modifier"
-            const abilityMatch = benefit.bonus_source?.match(/^(\w+)_modifier$/);
-            if (abilityMatch) {
-              const ability = abilityMatch[1];
-              if (!skillAdditionalAbilitiesMap[skillKey].includes(ability)) {
-                skillAdditionalAbilitiesMap[skillKey].push(ability);
-              }
-            }
-          });
-        }
-        // skill_proficiency: Mark this skill as proficient
-        else if (benefitType === 'skill_proficiency' && benefit.skill) {
-          const skillKey = benefit.skill.toLowerCase().replace(/[\s']/g, '_');
-          skillProficienciesFromFeatures.add(skillKey);
-        }
-        // skill_half_proficiency: Jack of All Trades style half proficiency
-        else if (benefitType === 'skill_half_proficiency') {
-          hasHalfProficiency = true;
-        }
-      });
-    }
-  });
-  /**
-   * DERIVED MODIFIERS REQUIRED
-   * derivedMods comes from CharacterSheet and includes all bonuses/feats/ASIs
-   * Always use derivedMods for ability checks in this tab.
-   * This includes all feature bonuses (e.g., Scholar of Yore +CHA to History).
-   */
-  const abilityModifier = (score) => Math.floor((score - 10) / 2);
-  const skillSlug = (name) => name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-  
-  // Use passed-in derivedMods which includes ALL bonuses
-  const getAbilityMod = (abilityKey) => {
-    // ALWAYS use passed-in derivedMods - they're calculated with all bonuses applied
-    return derivedMods?.[abilityKey] ?? abilityModifier(character[abilityKey]);
-  };
-  
-  const allSkills = [
-    { name: 'Acrobatics', ability: 'DEX', mod: getAbilityMod('dexterity') },
-    { name: 'Animal Handling', ability: 'WIS', mod: getAbilityMod('wisdom') },
-    { name: 'Arcana', ability: 'INT', mod: getAbilityMod('intelligence') },
-    { name: 'Athletics', ability: 'STR', mod: getAbilityMod('strength') },
-    { name: 'Deception', ability: 'CHA', mod: getAbilityMod('charisma') },
-    { name: 'History', ability: 'INT', mod: getAbilityMod('intelligence') },
-    { name: 'Insight', ability: 'WIS', mod: getAbilityMod('wisdom') },
-    { name: 'Intimidation', ability: 'CHA', mod: getAbilityMod('charisma') },
-    { name: 'Investigation', ability: 'INT', mod: getAbilityMod('intelligence') },
-    { name: 'Medicine', ability: 'WIS', mod: getAbilityMod('wisdom') },
-    { name: 'Nature', ability: 'INT', mod: getAbilityMod('intelligence') },
-    { name: 'Perception', ability: 'WIS', mod: getAbilityMod('wisdom') },
-    { name: 'Performance', ability: 'CHA', mod: getAbilityMod('charisma') },
-    { name: 'Persuasion', ability: 'CHA', mod: getAbilityMod('charisma') },
-    { name: 'Religion', ability: 'INT', mod: getAbilityMod('intelligence') },
-    { name: 'Sleight of Hand', ability: 'DEX', mod: getAbilityMod('dexterity') },
-    { name: 'Stealth', ability: 'DEX', mod: getAbilityMod('dexterity') },
-    { name: 'Survival', ability: 'WIS', mod: getAbilityMod('wisdom') },
-  ];
-
-  // Create skill lookup for proficiency/expertise
-  const skillLookup = {};
-  characterSkills.forEach(cs => {
-    skillLookup[cs.skill_name] = cs;
-  });
-
-  const abilityKeyToAbbrev = {
-    strength: 'STR',
-    dexterity: 'DEX',
-    constitution: 'CON',
-    intelligence: 'INT',
-    wisdom: 'WIS',
-    charisma: 'CHA'
-  };
-
-  return (
-    <div className="skills-tab">
-      <h2>Skills</h2>
-      {loading ? (
-        <div className="loading-container">
-          <img src="/crest.png" alt="" className="loading-crest loading-crest-small" />
-          <span className="loading-text">Loading skills...</span>
-        </div>
-      ) : (
-        <div className="skills-list">
-          {allSkills.map(skill => {
-            const skillKey = skill.name.toLowerCase().replace(/[\s']/g, '_');
-            const charSkill = skillLookup[skill.name];
-            const hasFeatureProficiency = skillProficienciesFromFeatures.has(skillKey);
-            const isProficient = !!charSkill || hasFeatureProficiency;
-            const isExpertise = charSkill?.expertise || false;
-            const hasHalfProf = !isProficient && !isExpertise && hasHalfProficiency;
-
-            
-            // Determine proficiency level using structured definition
-            let proficiencyLevel;
-            if (isExpertise) {
-              proficiencyLevel = PROFICIENCY_LEVELS.expertise;
-            } else if (isProficient) {
-              proficiencyLevel = PROFICIENCY_LEVELS.proficient;
-            } else if (hasHalfProf) {
-              proficiencyLevel = PROFICIENCY_LEVELS.half;
-            } else {
-              proficiencyLevel = PROFICIENCY_LEVELS.unskilled;
-            }
-            
-            const proficiencyIconSrc = new URL(`../assets/icons/proficiency/${proficiencyLevel.icon}`, import.meta.url).href;
-            const skillIconSrc = new URL(`../assets/icons/skill/${skillSlug(skill.name)}.svg`, import.meta.url).href;
-            
-            // Calculate bonus: base ability mod + proficiency bonus + additional ability mods
-            let bonus = skill.mod;
-            bonus += proficiencyLevel.bonusMultiplier(proficiencyBonus);
-            
-            // Add any additional ability modifiers from features
-            // Example: Scholar of Yore adds CHA to History and Religion
-            const additionalAbilities = skillAdditionalAbilitiesMap[skillKey] || [];
-            additionalAbilities.forEach(ability => {
-              const additionalMod = derivedMods[ability] || 0;
-              bonus += additionalMod;
-            })
-
-            const abilitySuffixes = additionalAbilities
-              .map((ability) => abilityKeyToAbbrev[ability])
-              .filter(Boolean);
-            const abilityDisplay = abilitySuffixes.length > 0
-              ? `${skill.ability}+${abilitySuffixes.join('+')}`
-              : skill.ability;
-
-            return (
-              <div key={skill.name} className={`skill-item ${isExpertise ? 'expertise' : isProficient ? 'proficient' : hasHalfProf ? 'half' : ''}`}>
-                <div className="skill-info">
-                  <span
-                    className="skill-proficiency-icon"
-                    style={{ '--icon-url': `url(${proficiencyIconSrc})` }}
-                    aria-hidden="true"
-                  />
-                  <span
-                    className="skill-icon"
-                    style={{ '--icon-url': `url(${skillIconSrc})` }}
-                    aria-hidden="true"
-                  />
-                  <span className="skill-name">{skill.name}</span>
-                  <span className="skill-ability">({abilityDisplay})</span>
-                </div>
-                <span className="skill-bonus">{bonus >= 0 ? '+' : ''}{bonus}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Tab 3: Spells
-function SpellsTab({ character, spells, loading }) {
-  if (!character.spellcasting_ability) {
-    return (
-      <div className="spells-tab">
-        <h2>Spells</h2>
-        <p className="info-text">This character is not a spellcaster</p>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="spells-tab">
-        <h2>Spells</h2>
-        <div className="loading-container">
-          <img src="/crest.png" alt="" className="loading-crest loading-crest-small" />
-          <span className="loading-text">Loading spells...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Group spells by level
-  const spellsByLevel = {};
-  spells.forEach(cs => {
-    const level = cs.spell?.level ?? 0;
-    if (!spellsByLevel[level]) {
-      spellsByLevel[level] = [];
-    }
-    spellsByLevel[level].push(cs);
-  });
-
-  const spellLevelNames = {
-    0: 'Cantrips',
-    1: '1st Level',
-    2: '2nd Level',
-    3: '3rd Level',
-    4: '4th Level',
-    5: '5th Level',
-    6: '6th Level',
-    7: '7th Level',
-    8: '8th Level',
-    9: '9th Level',
-  };
-
-  return (
-    <div className="spells-tab">
-      <div className="spellcasting-header">
-        <h2>Spells</h2>
-        <p className="spellcasting-info">
-          <strong>Spellcasting Ability:</strong> {character.spellcasting_ability.toUpperCase()}
-        </p>
-      </div>
-
-      {spells.length === 0 ? (
-        <p className="info-text">No spells found for this character</p>
-      ) : (
-        <div className="spells-by-level">
-          {Object.keys(spellsByLevel).sort((a, b) => Number(a) - Number(b)).map(level => (
-            <div key={level} className="spell-level-group">
-              <h3 className="spell-level-header">{spellLevelNames[level]}</h3>
-              <div className="spell-list">
-                {spellsByLevel[level].map(cs => (
-                  <div key={cs.id} className="spell-item">
-                    <div className="spell-main">
-                      <div className="spell-name-row">
-                        <input
-                          type="checkbox"
-                          checked={cs.is_prepared}
-                          disabled
-                          className="spell-prepared-check"
-                        />
-                        <span className="spell-name">{cs.spell?.name}</span>
-                        {cs.always_prepared && <span className="always-prepared">Always Prepared</span>}
-                      </div>
-                      <div className="spell-meta">
-                        <span className="spell-school">{cs.spell?.school}</span>
-                        <span className="spell-separator">•</span>
-                        <span className="spell-casting-time">{cs.spell?.casting_time}</span>
-                        <span className="spell-separator">•</span>
-                        <span className="spell-range">{cs.spell?.range}</span>
-                      </div>
-                    </div>
-                    <div className="spell-description">
-                      {cs.spell?.description}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Helper to extract uses data from magic item (can be in multiple JSONB locations)
+// Helper to extract uses data from magic item (supports new benefits[] and legacy shapes)
 const getMagicItemUses = (magicItem) => {
   if (!magicItem) return null;
-  // Check benefits.uses first
-  if (magicItem.benefits?.uses) return magicItem.benefits.uses;
-  // Check properties.benefits.uses
+
+  const extractFromBenefitEntry = (entry) => {
+    if (!entry || typeof entry !== 'object') return null;
+
+    // New preferred shape: { uses: { max, type, recharge } }
+    if (entry.uses && typeof entry.uses === 'object') return entry.uses;
+
+    // Alternate structured shape: { type: 'uses', max, recharge }
+    if (String(entry.type || '').toLowerCase() === 'uses') {
+      return {
+        max: entry.max,
+        type: entry.useType || entry.usesType || 'uses',
+        recharge: entry.recharge
+      };
+    }
+
+    return null;
+  };
+
+  // New model: benefits is an array of benefit objects
+  if (Array.isArray(magicItem.benefits)) {
+    for (const benefit of magicItem.benefits) {
+      const uses = extractFromBenefitEntry(benefit);
+      if (uses) return uses;
+    }
+  }
+
+  // Transitional model: benefits is an object with uses key
+  if (magicItem.benefits?.uses && typeof magicItem.benefits.uses === 'object') {
+    return magicItem.benefits.uses;
+  }
+
+  // Legacy model compatibility: properties may still contain uses data
   if (magicItem.properties?.benefits?.uses) return magicItem.properties.benefits.uses;
-  // Check properties.uses
   if (magicItem.properties?.uses) return magicItem.properties.uses;
+
   return null;
 };
 
@@ -1773,6 +1982,17 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
     window.addEventListener('itemUsesChanged', handleUsesChanged);
     return () => window.removeEventListener('itemUsesChanged', handleUsesChanged);
   }, []);
+
+  // Reset in-memory item uses when a long rest is performed
+  useEffect(() => {
+    const handleLongRest = (e) => {
+      if (e?.detail?.characterId && e.detail.characterId !== character?.id) return;
+      setItemUsesState({});
+    };
+
+    window.addEventListener('longRestPerformed', handleLongRest);
+    return () => window.removeEventListener('longRestPerformed', handleLongRest);
+  }, [character?.id]);
   
   const handleItemUsesChange = (itemId, newUses) => {
     setItemUsesState(prev => ({ ...prev, [itemId]: newUses }));
@@ -1836,8 +2056,9 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
 
   // Determine if an item is equippable
   const isEquippable = (item) => {
-    if (!item.equipment) return false;
-    const type = item.equipment.type?.toLowerCase() || '';
+    const equipmentData = getInventoryEquipmentData(item);
+    if (!equipmentData) return false;
+    const type = equipmentData.type?.toLowerCase() || '';
     return type.includes('weapon') || type.includes('armor');
   };
 
@@ -1867,7 +2088,7 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
     return (
       <div className="inventory-list">
         {displayItems.map((item) => {
-          const itemName = item.equipment?.name || item.magic_item?.name || 'Unknown';
+          const itemName = item.equipment?.name || item.magic_item?.name || item.trinket_name || 'Unknown';
           const isMagic = !!item.magic_item;
           const rarityClass = getRarityClass(item);
           const itemClasses = `inventory-item ${isMagic ? 'magic' : ''} ${item.attuned ? 'attuned' : ''}`;
@@ -1882,7 +2103,8 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
               intelligence: Math.floor((character.intelligence - 10) / 2),
               wisdom: Math.floor((character.wisdom - 10) / 2),
               charisma: Math.floor((character.charisma - 10) / 2)
-            }
+            },
+            character.level
           ) : 0;
 
           return (
@@ -1961,9 +2183,12 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
         character_id: character.id,
         quantity: 1,
         equipped: false,
+        attuned: false,
+        notes: null,
         pocket: null,
         equipment_id: result.type === 'equipment' ? result.id : null,
-        magic_item_id: result.type === 'magic' ? result.id : null
+        magic_item_id: result.type === 'magic' ? result.id : null,
+        trinket_name: result.type === 'trinket' ? result.name : null
       };
 
       const { error } = await supabase
@@ -1982,6 +2207,17 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
     } catch (err) {
       console.error('Error adding item:', err);
     }
+  };
+
+  const handleAddTrinket = async () => {
+    const name = searchTerm.trim();
+    if (!name || !character?.id) return;
+
+    await handleAddItem({
+      id: `trinket-${Date.now()}`,
+      name,
+      type: 'trinket'
+    });
   };
 
   const handleChangePocket = async (itemId, newPocket) => {
@@ -2037,13 +2273,13 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
-          {(searchTerm.trim().length >= 2) && (
+          {(searchTerm.trim().length >= 1) && (
             <div className="inventory-search-results">
-              {isSearching && <div className="inventory-search-empty">Searching...</div>}
-              {!isSearching && searchResults.length === 0 && (
+              {searchTerm.trim().length >= 2 && isSearching && <div className="inventory-search-empty">Searching...</div>}
+              {searchTerm.trim().length >= 2 && !isSearching && searchResults.length === 0 && (
                 <div className="inventory-search-empty">No items found.</div>
               )}
-              {!isSearching && searchResults.map((result) => (
+              {searchTerm.trim().length >= 2 && !isSearching && searchResults.map((result) => (
                 <button
                   key={`${result.type}-${result.id}`}
                   className="inventory-search-result"
@@ -2055,6 +2291,15 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
                   <span className="inventory-search-add">Add</span>
                 </button>
               ))}
+              <button
+                className="inventory-search-result"
+                onClick={handleAddTrinket}
+                type="button"
+              >
+                <span className="inventory-search-name">{searchTerm.trim()}</span>
+                <span className="inventory-search-type">Trinket</span>
+                <span className="inventory-search-add">Add</span>
+              </button>
             </div>
           )}
         </div>
@@ -2145,10 +2390,13 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
           {activePocket === 'all' ? (
             // Show default filters only (not custom pockets)
             [...(itemsByPocket['Equipped']?.length ? ['Equipped'] : []), ...DEFAULT_FILTERS].map((filter) => {
-              // In "all" view, exclude equipped items from Weapons/Armor since they're in Equipped
-              const filterItems = (filter === 'Weapons' || filter === 'Armor') 
+              // In "all" view, exclude equipped equippable items from category buckets
+              // because they are already listed in Equipped.
+              const filterItems = (filter === 'Weapons' || filter === 'Armour')
                 ? (itemsByPocket[filter] || []).filter(item => !item.equipped)
-                : (itemsByPocket[filter] || []);
+                : filter === 'Magic'
+                  ? (itemsByPocket[filter] || []).filter(item => !(item.equipped && isEquippable(item)))
+                  : (itemsByPocket[filter] || []);
               
               // Sort magic items by rarity and name
               const sortedItems = filter === 'Magic' ? sortItemsByRarityAndName(filterItems) : filterItems;
@@ -2217,11 +2465,53 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
   );
 }
 
+// Helper to extract unlocked masteries from character features
+function getUnlockedMasteries(character) {
+  const features = character?.features || [];
+  const masterySet = new Set();
+   const normalizeBenefits = (rawBenefits) => {
+    if (Array.isArray(rawBenefits)) return rawBenefits;
+    if (rawBenefits && typeof rawBenefits === 'object') {
+      return rawBenefits.type ? [rawBenefits] : [];
+    }
+    if (typeof rawBenefits === 'string') {
+      try {
+        const parsed = JSON.parse(rawBenefits);
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === 'object' && parsed.type) return [parsed];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+  
+  const normalizeBenefitType = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  
+  features.forEach(feature => {
+    const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+    benefits.forEach(benefit => {
+      if (normalizeBenefitType(benefit?.type) === 'mastery' && Array.isArray(benefit.masteries)) {
+        benefit.masteries.forEach(weaponName => {
+          // Normalize weapon names for comparison (lowercase, trim)
+          masterySet.add(weaponName.toLowerCase().trim());
+        });
+      }
+    });
+  });
+  
+  return masterySet;
+}
+
 // Item Modal Component - displays detailed information about inventory items
-function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOptions = [], onPocketUpdate, onCreatePocket, proficiencyBonus, abilityModifiers, characterId }) {
+function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOptions = [], onPocketUpdate, onCreatePocket, proficiencyBonus, abilityModifiers, characterId, character }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [quantityInput, setQuantityInput] = useState(item?.quantity || 1);
   const [pocketInput, setPocketInput] = useState(item?.pocket || '');
+  const [trinketDescription, setTrinketDescription] = useState(item?.notes || '');
   const [isSaving, setIsSaving] = useState(false);
   const [showPocketDropdown, setShowPocketDropdown] = useState(false);
   const [itemUses, setItemUses] = useState(() => {
@@ -2236,6 +2526,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
       setQuantityInput(item.quantity);
     }
     setPocketInput(item?.pocket || '');
+    setTrinketDescription(item?.notes || '');
     setShowPocketDropdown(false);
     
     // Load stored uses for this item
@@ -2255,15 +2546,60 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
       }));
     }
   };
+
+  // Reset modal's in-memory uses on long rest
+  useEffect(() => {
+    const handleLongRest = (e) => {
+      if (e?.detail?.characterId && e.detail.characterId !== characterId) return;
+      setItemUses(0);
+    };
+
+    window.addEventListener('longRestPerformed', handleLongRest);
+    return () => window.removeEventListener('longRestPerformed', handleLongRest);
+  }, [characterId]);
   
   if (!isOpen || !item) return null;
 
   const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
   const isEquipment = !!item.equipment;
   const isMagicItem = !!item.magic_item;
-  const itemData = isEquipment ? item.equipment : item.magic_item;
-  const rawData = itemData?.raw_data || {};
-  const isWeapon = isEquipment && item.equipment.type?.toLowerCase().includes('weapon');
+  const isTrinket = !isEquipment && !isMagicItem && !!item.trinket_name;
+  const linkedEquipment = getInventoryEquipmentData(item);
+  const isEquipmentLike = !!linkedEquipment;
+  const itemData = isEquipment
+    ? item.equipment
+    : isMagicItem
+      ? item.magic_item
+      : {
+        name: item.trinket_name,
+        description: item.notes || null,
+        raw_data: {}
+      };
+  const rawData = linkedEquipment?.raw_data || itemData?.raw_data || {};
+  const isWeapon = isEquipmentLike && linkedEquipment.type?.toLowerCase().includes('weapon');
+  const hasTrinketDescriptionChanges = isTrinket && (trinketDescription !== (item?.notes || ''));
+
+  const saveTrinketDescription = async () => {
+    if (!isTrinket || !item?.id) return;
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from('character_inventory')
+        .update({ notes: trinketDescription.trim() || null })
+        .eq('id', item.id);
+
+      if (error) throw error;
+
+      if (onQuantityUpdate) {
+        await onQuantityUpdate();
+      }
+    } catch (err) {
+      console.error('Error updating trinket description:', err);
+      setTrinketDescription(item?.notes || '');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="item-modal-overlay" onClick={onClose}>
@@ -2306,7 +2642,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
             if (!isMagicItem) return null;
             const usesData = getMagicItemUses(itemData);
             if (!usesData) return null;
-            const maxUses = calculateMaxUses(usesData.max, proficiencyBonus, abilityModifiers);
+            const maxUses = calculateMaxUses(usesData.max, proficiencyBonus, abilityModifiers, character.level);
             if (maxUses <= 0) return null;
             
             // Derive label from type (e.g., "charges", "uses") and capitalize
@@ -2333,7 +2669,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
           })()}
           
           {/* Basic Info - only show for equipment with cost/weight */}
-          {isEquipment && (rawData.cost || rawData.weight !== undefined || rawData.rarity) && (
+          {isEquipmentLike && (rawData.cost || rawData.weight !== undefined || rawData.rarity) && (
             <div className="item-section">
               {(rawData.cost || rawData.weight !== undefined) && (
                 <div className="item-row" style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
@@ -2367,6 +2703,19 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
             <>
               <h3>Weapon Properties</h3>
               <div className="item-weapon-properties">
+                {/* Proficiency Status */}
+                {(() => {
+                  const isProficient = isWeaponProficient(linkedEquipment, character);
+                  return (
+                    <div className="item-row">
+                      <span className="item-label">Proficiency:</span>
+                      <span className={isProficient ? 'proficiency-yes' : 'proficiency-no'}>
+                        {isProficient ? '✓ Proficient' : '✗ Not Proficient'}
+                      </span>
+                    </div>
+                  );
+                })()}
+                
                 {rawData.damage && (
                   <div className="item-row">
                     <span className="item-label">Melee Damage:</span>
@@ -2395,21 +2744,57 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
                   </div>
                 )}
                 
-                {rawData.mastery && (
-                  <div className="item-row">
-                    <span className="item-label">Mastery:</span>
-                    <span>{rawData.mastery.name || rawData.mastery}</span>
-                  </div>
-                )}
+                {rawData.mastery && (() => {
+                  const masteryName = rawData.mastery.name || rawData.mastery;
+                  const weaponName = linkedEquipment?.name?.toLowerCase().trim();
+                  const unlockedMasteries = getUnlockedMasteries(character);
+                  const hasMastery = weaponName && unlockedMasteries.has(weaponName);
+                  
+                  return (
+                    <div className="item-row">
+                      <span className="item-label">Mastery:</span>
+                      <span className={hasMastery ? 'mastery-unlocked' : ''}>{masteryName}</span>
+                    </div>
+                  );
+                })()}
               </div>
             </>
           )}
           
-          {/* Armor Properties */}
-          {isEquipment && item.equipment.type?.toLowerCase().includes('armor') && (
+          {/* Armour Properties */}
+          {isEquipmentLike && linkedEquipment.type?.toLowerCase().includes('armor') && (
             <>
-              <h3>Armor Properties</h3>
+              <h3>Armour Properties</h3>
               <div className="item-armor-properties">
+                {/* Check if this is a shield or armor */}
+                {(() => {
+                  const isShieldItem = rawData?.equipment_categories?.some(cat => cat.index === 'shields');
+                  
+                  if (isShieldItem) {
+                    // Shield proficiency check
+                    const isProficient = isShieldProficient(character, character?.features || []);
+                    return (
+                      <div className="item-row">
+                        <span className="item-label">Proficiency:</span>
+                        <span className={isProficient ? 'proficiency-yes' : 'proficiency-no'}>
+                          {isProficient ? '✓ Proficient' : '✗ Not Proficient (no AC bonus)'}
+                        </span>
+                      </div>
+                    );
+                  } else {
+                    // Armor proficiency check
+                    const isProficient = isArmorProficient(linkedEquipment, character, character?.features || []);
+                    return (
+                      <div className="item-row">
+                        <span className="item-label">Proficiency:</span>
+                        <span className={isProficient ? 'proficiency-yes' : 'proficiency-no'}>
+                          {isProficient ? '✓ Proficient' : '✗ Not Proficient'}
+                        </span>
+                      </div>
+                    );
+                  }
+                })()}
+                
                 {rawData.equipment_categories && rawData.equipment_categories.length > 0 && (
                   <div className="item-row">
                     <span className="item-label">Type:</span>
@@ -2453,6 +2838,40 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
                 )}
               </div>
             </>
+          )}
+
+          {isTrinket && (
+            <div className="item-section">
+              <div className="item-row" style={{ marginBottom: '8px' }}>
+                <span className="item-label">Description:</span>
+              </div>
+              <textarea
+                className="item-quantity-input"
+                rows={4}
+                value={trinketDescription}
+                onChange={(e) => setTrinketDescription(e.target.value)}
+                disabled={isSaving}
+                placeholder="Add notes or description for this trinket..."
+                style={{ width: '100%', resize: 'vertical' }}
+              />
+              {hasTrinketDescriptionChanges && (
+                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    className="item-quantity-save"
+                    onClick={saveTrinketDescription}
+                    disabled={isSaving}
+                    title="Save description"
+                    aria-label="Save description"
+                  >
+                    <span
+                      className="item-quantity-save-icon"
+                      style={{ '--icon-url': `url(${new URL('../assets/icons/util/tick.svg', import.meta.url).href})` }}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
+              )}
+            </div>
           )}
           
           {/* Pocket Selection */}
@@ -2615,29 +3034,117 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
   );
 }
 
-// Helper to calculate max uses from string like "charisma" or "proficiency"
-const calculateMaxUses = (maxUsesStr, proficiencyBonus, abilityModifiers) => {
-  if (!maxUsesStr) return 0;
-  
-  const str = maxUsesStr.toLowerCase().trim();
-  
-  if (str === 'proficiency') {
-    return proficiencyBonus;
-  }
-  
-  // Check if it's an ability name (strength, dexterity, constitution, intelligence, wisdom, charisma)
+const getUseScalingMap = (feature) => {
+  const rawBenefits = feature?.benefits ?? feature?.benefit;
+
+  if (!rawBenefits) return null;
+
+  const tryExtract = (value) => {
+    if (!value) return null;
+
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (entry && typeof entry === 'object' && entry.use_scaling && typeof entry.use_scaling === 'object') {
+          return entry.use_scaling;
+        }
+      }
+      return null;
+    }
+
+    if (typeof value === 'object') {
+      if (value.use_scaling && typeof value.use_scaling === 'object') {
+        return value.use_scaling;
+      }
+      return null;
+    }
+
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return tryExtract(parsed);
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  };
+
+  return tryExtract(rawBenefits);
+};
+
+// Helper to calculate max uses from strings like:
+// "charisma", "proficiency", "level", "level/2ru", "level/2rd", "3", "scaling"
+const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, characterLevel = 1, feature = null) => {
+  if (maxUsesValue === null || maxUsesValue === undefined || maxUsesValue === '') return 0;
+
   const abilities = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
-  if (abilities.includes(str)) {
-    return abilityModifiers[str] || 0;
+
+  const resolveBaseValue = (token) => {
+    const normalized = String(token || '').toLowerCase().trim();
+    if (!normalized) return null;
+
+    if (normalized === 'proficiency') return Number(proficiencyBonus) || 0;
+    if (normalized === 'level') return Number(characterLevel) || 0;
+    if (abilities.includes(normalized)) return Number(abilityModifiers?.[normalized]) || 0;
+
+    const numeric = Number(normalized);
+    if (Number.isFinite(numeric)) return numeric;
+
+    return null;
+  };
+
+  const str = String(maxUsesValue).toLowerCase().trim();
+
+  // Special scaling resources
+  if (str === 'wildshape') {
+    if (characterLevel <= 1) return 0;
+    if (characterLevel <= 4) return 2;
+    if (characterLevel <= 16) return 3;
+    return 4;
   }
-  
-  // Try to parse as a number
-  const num = parseInt(str, 10);
-  if (!isNaN(num)) {
-    return num;
+
+  // Feature-driven use scaling from benefits.use_scaling
+  // Example: { use_scaling: { "1": 2, "4": 3, "12": 4 } }
+  if (str === 'scaling') {
+    const scalingMap = getUseScalingMap(feature);
+    if (!scalingMap || typeof scalingMap !== 'object') return 0;
+
+    const level = Math.max(1, Number(characterLevel) || 1);
+    const thresholds = Object.entries(scalingMap)
+      .map(([gate, uses]) => [Number.parseInt(gate, 10), Number(uses)])
+      .filter(([gate, uses]) => Number.isFinite(gate) && Number.isFinite(uses))
+      .sort((a, b) => a[0] - b[0]);
+
+    if (!thresholds.length) return 0;
+
+    let resolvedUses = 0;
+    thresholds.forEach(([gate, uses]) => {
+      if (level >= gate) resolvedUses = uses;
+    });
+
+    return Math.max(0, Math.floor(resolvedUses));
   }
-  
-  return 0;
+
+  // Support patterns like level/2ru, level/2rd, proficiency/2ru, charisma/2rd
+  const divisionMatch = str.match(/^([a-z_]+|\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*(ru|rd)$/i);
+  if (divisionMatch) {
+    const [, baseToken, divisorToken, roundingMode] = divisionMatch;
+    const baseValue = resolveBaseValue(baseToken);
+    const divisor = Number(divisorToken);
+
+    if (baseValue === null || !Number.isFinite(baseValue) || !Number.isFinite(divisor) || divisor <= 0) {
+      return 0;
+    }
+
+    const divided = baseValue / divisor;
+    const rounded = roundingMode.toLowerCase() === 'ru' ? Math.ceil(divided) : Math.floor(divided);
+    return Math.max(0, rounded);
+  }
+
+  const directValue = resolveBaseValue(str);
+  if (directValue === null || !Number.isFinite(directValue)) return 0;
+  return Math.max(0, Math.floor(directValue));
 };
 
 // Component to display feature uses tracker
@@ -2758,101 +3265,120 @@ function FeatureUsesTracker({ maxUses, featureId, onUsesChange, storedUses }) {
   );
 }
 
-// Tab 4: Actions
-function ActionsTab({ character }) {
-  const [activeSubtab, setActiveSubtab] = useState('actions');
+function FeaturePoolTracker({ poolMax, featureId, poolName, storedValue, onPoolChange }) {
+  const normalizeValue = (value) => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return poolMax;
+    return Math.min(Math.max(value, 0), poolMax);
+  };
+
+  const [currentValue, setCurrentValue] = useState(normalizeValue(storedValue));
+
+  useEffect(() => {
+    setCurrentValue(normalizeValue(storedValue));
+  }, [storedValue, poolMax]);
+
+  if (!poolMax || poolMax <= 0) return null;
+
+  const setValue = (nextValue) => {
+    const normalized = Math.min(Math.max(nextValue, 0), poolMax);
+    setCurrentValue(normalized);
+    onPoolChange?.(featureId, normalized);
+  };
 
   return (
-    <div className="actions-tab">
-      <h2>Actions</h2>
+    <div className="pool-tracker" onClick={(event) => event.stopPropagation()}>
+      {poolName ? <span className="pool-name">{poolName}</span> : null}
+      <button className="pool-btn" type="button" onClick={() => setValue(currentValue - 1)} disabled={currentValue <= 0}>-</button>
+      <input
+        className="pool-input"
+        type="number"
+        min={0}
+        max={poolMax}
+        value={currentValue}
+        onChange={(event) => setValue(Number.parseInt(event.target.value, 10) || 0)}
+      />
+      <span className="pool-separator">/</span>
+      <span className="pool-max">{poolMax}</span>
+      <button className="pool-btn" type="button" onClick={() => setValue(currentValue + 1)} disabled={currentValue >= poolMax}>+</button>
+      <button
+        className="pool-reset"
+        type="button"
+        onClick={(event) => {
+          const button = event.currentTarget;
+          button.classList.remove('is-spinning');
+          void button.offsetWidth;
+          button.classList.add('is-spinning');
+          setValue(poolMax);
+        }}
+        aria-label="Reset pool"
+      >
+        <svg className="pool-reset-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 12a8 8 0 1 0 3-6.2" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4 5v5h5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+    </div>
+  );
+}
 
-      <div className="feature-subtabs">
-        <button
-          className={activeSubtab === 'actions' ? 'subtab-btn active' : 'subtab-btn'}
-          onClick={() => setActiveSubtab('actions')}
-        >
-          Actions
-        </button>
-        <button
-          className={activeSubtab === 'bonus' ? 'subtab-btn active' : 'subtab-btn'}
-          onClick={() => setActiveSubtab('bonus')}
-        >
-          Bonus Actions
-        </button>
-        <button
-          className={activeSubtab === 'reactions' ? 'subtab-btn active' : 'subtab-btn'}
-          onClick={() => setActiveSubtab('reactions')}
-        >
-          Reactions
-        </button>
-      </div>
+// Stance Selector Component - renders stance options for stance-type features
+function StanceSelector({ feature, activeStance, onStanceChange }) {
+  if (!feature) return null;
+  
+  const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
+  const stanceBenefit = benefits.find(b => b.type === 'stance');
+  
+  if (!stanceBenefit || !Array.isArray(stanceBenefit.stances) || stanceBenefit.stances.length === 0) {
+    return null;
+  }
+  
+  const handleStanceClick = (e, stanceName) => {
+    e.stopPropagation();
+    // Toggle off if clicking the active stance, otherwise set new stance
+    const newStance = activeStance === stanceName ? null : stanceName;
+    onStanceChange(feature.id, newStance);
+  };
 
-      <div className="feature-subtab-content">
-        {activeSubtab === 'actions' && (
-          <p className="info-text">No actions found.</p>
-        )}
-        {activeSubtab === 'bonus' && (
-          <p className="info-text">No bonus actions found.</p>
-        )}
-        {activeSubtab === 'reactions' && (
-          <p className="info-text">No reactions found.</p>
-        )}
+  return (
+    <div className="stance-selector" onClick={(e) => e.stopPropagation()}>
+      <div className="stance-label">Active Stance:</div>
+      <div className="stance-options">
+        {stanceBenefit.stances.map((stance, idx) => {
+          const isActive = activeStance === stance.name;
+          return (
+            <button
+              key={idx}
+              className={`stance-option ${isActive ? 'active' : ''}`}
+              onClick={(e) => handleStanceClick(e, stance.name)}
+              title={stance.description || ''} 
+              aria-label={`${stance.name}${isActive ? ' (active)' : ''}`}
+            >
+              {stance.name}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
 }
 
+// Tab 4: Actions (extracted to tabs/ActionsTab.jsx)
+
 // Tab 5: Features
-function FeaturesTab({ character, proficiencyBonus, abilityModifiers }) {
+function FeaturesTab({ 
+  character, 
+  proficiencyBonus, 
+  abilityModifiers,
+  usesState,
+  poolState,
+  expandedDescriptions,
+  onUsesChange,
+  onPoolChange,
+  onDescriptionToggle,
+  activeStances,
+  onStanceChange
+}) {
   const [activeSubtab, setActiveSubtab] = useState('class');
-  const [usesState, setUsesState] = useState({});
-  const [expandedDescriptions, setExpandedDescriptions] = useState({});
-  const [usesLoaded, setUsesLoaded] = useState(false);
-
-  const usesStorageKey = character?.id
-    ? `feature-uses:${character.id}`
-    : null;
-
-  useEffect(() => {
-    if (!usesStorageKey) return;
-    try {
-      const stored = localStorage.getItem(usesStorageKey);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && typeof parsed === 'object') {
-          setUsesState(parsed);
-          setUsesLoaded(true);
-          return;
-        }
-      }
-      setUsesState({});
-    } catch {
-      setUsesState({});
-    }
-    setUsesLoaded(true);
-  }, [usesStorageKey]);
-
-  useEffect(() => {
-    if (!usesStorageKey) return;
-    if (!usesLoaded) return;
-    try {
-      localStorage.setItem(usesStorageKey, JSON.stringify(usesState));
-    } catch {
-      // Ignore storage write errors (private mode or quota exceeded)
-    }
-  }, [usesState, usesStorageKey, usesLoaded]);
-  
-  const handleUsesChange = (featureId, newUses) => {
-    setUsesState(prev => ({ ...prev, [featureId]: newUses }));
-  };
-
-
-  const handleDescriptionToggle = (featureId) => {
-    setExpandedDescriptions(prev => ({
-      ...prev,
-      [featureId]: !prev[featureId]
-    }));
-  };
 
 
   return (
@@ -2888,10 +3414,14 @@ function FeaturesTab({ character, proficiencyBonus, abilityModifiers }) {
             character={character}
             proficiencyBonus={proficiencyBonus}
             abilityModifiers={abilityModifiers}
-            onUsesChange={handleUsesChange}
+            onUsesChange={onUsesChange}
             usesState={usesState}
+            poolState={poolState}
+            onPoolChange={onPoolChange}
             expandedDescriptions={expandedDescriptions}
-            onDescriptionToggle={handleDescriptionToggle}
+            onDescriptionToggle={onDescriptionToggle}
+            activeStances={activeStances}
+            onStanceChange={onStanceChange}
           />
         )}
         {activeSubtab === 'species' && (
@@ -2899,10 +3429,14 @@ function FeaturesTab({ character, proficiencyBonus, abilityModifiers }) {
             character={character}
             proficiencyBonus={proficiencyBonus}
             abilityModifiers={abilityModifiers}
-            onUsesChange={handleUsesChange}
+            onUsesChange={onUsesChange}
             usesState={usesState}
+            poolState={poolState}
+            onPoolChange={onPoolChange}
             expandedDescriptions={expandedDescriptions}
-            onDescriptionToggle={handleDescriptionToggle}
+            onDescriptionToggle={onDescriptionToggle}
+            activeStances={activeStances}
+            onStanceChange={onStanceChange}
           />
         )}
         {activeSubtab === 'feats' && (
@@ -2910,10 +3444,14 @@ function FeaturesTab({ character, proficiencyBonus, abilityModifiers }) {
             character={character}
             proficiencyBonus={proficiencyBonus}
             abilityModifiers={abilityModifiers}
-            onUsesChange={handleUsesChange}
+            onUsesChange={onUsesChange}
             usesState={usesState}
+            poolState={poolState}
+            onPoolChange={onPoolChange}
             expandedDescriptions={expandedDescriptions}
-            onDescriptionToggle={handleDescriptionToggle}
+            onDescriptionToggle={onDescriptionToggle}
+            activeStances={activeStances}
+            onStanceChange={onStanceChange}
           />
         )}
       </div>
@@ -2922,7 +3460,7 @@ function FeaturesTab({ character, proficiencyBonus, abilityModifiers }) {
 }
 
 // Feature Subtab: Class Features
-function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, expandedDescriptions, onDescriptionToggle }) {
+function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (feature) => {
     return typeof feature.source === 'object' && feature.source?.source;
@@ -2956,13 +3494,15 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
   };
 
   let subclassFeatures = character.features?.filter(f => getSourceType(f) === 'subclass') || [];
+  let fightingStyleFeatures = character.features?.filter(f => getSourceType(f) === 'fighting') || [];
   let classFeatures = character.features?.filter(f => getSourceType(f) === 'class') || [];
 
   // Sort by level
   subclassFeatures = [...subclassFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
+  fightingStyleFeatures = [...fightingStyleFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   classFeatures = [...classFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   
-  if (subclassFeatures.length === 0 && classFeatures.length === 0) {
+  if (subclassFeatures.length === 0 && fightingStyleFeatures.length === 0 && classFeatures.length === 0) {
     return (
       <div className="class-features">
         <p className="info-text">No class features found.</p>
@@ -2981,6 +3521,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
               const sourceDisplay = getSourceDisplayName(feature);
               const featureLevel = getSourceLevel(feature);
               const featureId = feature.id || `subclass-${feature.name || idx}`;
+              const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
               return (
                 <div
                   key={idx}
@@ -2996,12 +3537,86 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                   </div>
                   {feature.max_uses && (
                     <FeatureUsesTracker 
-                      maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers)}
+                      maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                       featureId={featureId}
                       storedUses={usesState[featureId]}
                       onUsesChange={onUsesChange}
                     />
                   )}
+                  {featurePool && (
+                    <FeaturePoolTracker
+                      poolMax={featurePool.max}
+                      featureId={`${featureId}-pool`}
+                      poolName={featurePool.name}
+                      storedValue={poolState[`${featureId}-pool`]}
+                      onPoolChange={onPoolChange}
+                    />
+                  )}
+                  <StanceSelector
+                    feature={feature}
+                    activeStance={activeStances?.[featureId]}
+                    onStanceChange={onStanceChange}
+                  />
+                  {feature.description && (
+                    <FeatureDescriptionBlock
+                      featureId={featureId}
+                      description={feature.description}
+                      expanded={!!expandedDescriptions[featureId]}
+                      onToggle={onDescriptionToggle}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Class Features */}
+      {fightingStyleFeatures.length > 0 && (
+        <div className="feature-group">
+          <h4 className="feature-group-header">Fighting Styles</h4>
+          <div className="feature-list">
+            {fightingStyleFeatures.map((feature, idx) => {
+              const sourceDisplay = getSourceDisplayName(feature);
+              const featureLevel = getSourceLevel(feature);
+              const featureId = feature.id || `fighting-${feature.name || idx}`;
+              const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              return (
+                <div
+                  key={idx}
+                  className="feature-item"
+                  onClick={(event) => {
+                    if (isFeatureToggleIgnored(event.target)) return;
+                    onDescriptionToggle(featureId);
+                  }}
+                >
+                  <div className="feature-header">
+                    <h3 className="feature-name">{feature.name}</h3>
+                    {featureLevel && <span className="feature-source">{sourceDisplay} — {featureLevel}</span>}
+                  </div>
+                  {feature.max_uses && (
+                    <FeatureUsesTracker 
+                      maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
+                      featureId={featureId}
+                      storedUses={usesState[featureId]}
+                      onUsesChange={onUsesChange}
+                    />
+                  )}
+                  {featurePool && (
+                    <FeaturePoolTracker
+                      poolMax={featurePool.max}
+                      featureId={`${featureId}-pool`}
+                      poolName={featurePool.name}
+                      storedValue={poolState[`${featureId}-pool`]}
+                      onPoolChange={onPoolChange}
+                    />
+                  )}
+                  <StanceSelector
+                    feature={feature}
+                    activeStance={activeStances?.[featureId]}
+                    onStanceChange={onStanceChange}
+                  />
                   {feature.description && (
                     <FeatureDescriptionBlock
                       featureId={featureId}
@@ -3026,6 +3641,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
               const sourceDisplay = getSourceDisplayName(feature);
               const featureLevel = getSourceLevel(feature);
               const featureId = feature.id || `class-${feature.name || idx}`;
+              const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
               return (
                 <div
                   key={idx}
@@ -3041,12 +3657,26 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                   </div>
                   {feature.max_uses && (
                     <FeatureUsesTracker 
-                      maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers)}
+                      maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                       featureId={featureId}
                       storedUses={usesState[featureId]}
                       onUsesChange={onUsesChange}
                     />
                   )}
+                  {featurePool && (
+                    <FeaturePoolTracker
+                      poolMax={featurePool.max}
+                      featureId={`${featureId}-pool`}
+                      poolName={featurePool.name}
+                      storedValue={poolState[`${featureId}-pool`]}
+                      onPoolChange={onPoolChange}
+                    />
+                  )}
+                  <StanceSelector
+                    feature={feature}
+                    activeStance={activeStances?.[featureId]}
+                    onStanceChange={onStanceChange}
+                  />
                   {feature.description && (
                     <FeatureDescriptionBlock
                       featureId={featureId}
@@ -3066,7 +3696,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
 }
 
 // Feature Subtab: Species Features
-function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, expandedDescriptions, onDescriptionToggle }) {
+function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (feature) => {
     return typeof feature.source === 'object' && feature.source?.source;
@@ -3078,9 +3708,20 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
     return feature.source;
   };
   
-  const speciesFeatures = character.features?.filter(f => getSourceType(f) === 'species') || [];
+  const allSpeciesFeatures = character.features?.filter(f => getSourceType(f) === 'species') || [];
   
-  if (speciesFeatures.length === 0) {
+  // Separate core and non-core features
+  const coreFeatures = allSpeciesFeatures.filter(f => 
+    isNewSourceFormat(f) && f.source.core === true
+  );
+  const nonCoreFeatures = allSpeciesFeatures.filter(f => 
+    !isNewSourceFormat(f) || f.source.core !== true
+  );
+  
+  // Get species name from the first feature with new source format
+  const speciesName = allSpeciesFeatures.find(f => isNewSourceFormat(f) && f.source.species)?.source.species || 'Species';
+  
+  if (allSpeciesFeatures.length === 0) {
     return (
       <div className="species-features">
         <p className="info-text">No species traits found.</p>
@@ -3088,11 +3729,45 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
     );
   }
 
+  // Bundle core features into a single feature
+  const bundledCoreFeature = coreFeatures.length > 0 ? {
+    id: `species-core-${speciesName}`,
+    name: speciesName,
+    description: coreFeatures.map(f => f.description).filter(Boolean).join('\n\n'),
+    max_uses: null, // Core features don't have uses
+  } : null;
+
   return (
     <div className="species-features">
       <div className="feature-list">
-        {speciesFeatures.map((feature, idx) => {
+        {/* Bundled core features at the top */}
+        {bundledCoreFeature && (
+          <div
+            key="core-bundle"
+            className="feature-item"
+            onClick={(event) => {
+              if (isFeatureToggleIgnored(event.target)) return;
+              onDescriptionToggle(bundledCoreFeature.id);
+            }}
+          >
+            <div className="feature-header">
+              <h3 className="feature-name">{bundledCoreFeature.name}</h3>
+            </div>
+            {bundledCoreFeature.description && (
+              <FeatureDescriptionBlock
+                featureId={bundledCoreFeature.id}
+                description={bundledCoreFeature.description}
+                expanded={!!expandedDescriptions[bundledCoreFeature.id]}
+                onToggle={onDescriptionToggle}
+              />
+            )}
+          </div>
+        )}
+        
+        {/* Non-core features */}
+        {nonCoreFeatures.map((feature, idx) => {
           const featureId = feature.id || `species-${feature.name || idx}`;
+          const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
           return (
           <div
             key={idx}
@@ -3107,12 +3782,26 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
             </div>
             {feature.max_uses && (
               <FeatureUsesTracker 
-                maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers)}
+                maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                 featureId={featureId}
                 storedUses={usesState[featureId]}
                 onUsesChange={onUsesChange}
               />
             )}
+            {featurePool && (
+              <FeaturePoolTracker
+                poolMax={featurePool.max}
+                featureId={`${featureId}-pool`}
+                poolName={featurePool.name}
+                storedValue={poolState[`${featureId}-pool`]}
+                onPoolChange={onPoolChange}
+              />
+            )}
+            <StanceSelector
+              feature={feature}
+              activeStance={activeStances?.[featureId]}
+              onStanceChange={onStanceChange}
+            />
             {feature.description && (
               <FeatureDescriptionBlock
                 featureId={featureId}
@@ -3130,7 +3819,7 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
 }
 
 // Feature Subtab: Feats (includes background features)
-function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, expandedDescriptions, onDescriptionToggle }) {
+function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (item) => {
     return typeof item.source === 'object' && item.source?.source;
@@ -3141,7 +3830,7 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
     }
     return item.source;
   };
-  
+
   const backgroundFeatures = character.features?.filter(f => getSourceType(f) === 'background') || [];
   const feats = character.feats || [];
   
@@ -3159,6 +3848,7 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
         {/* Background Features */}
         {backgroundFeatures.map((feature, idx) => {
           const featureId = feature.id || `bg-${feature.name || idx}`;
+          const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
           return (
           <div
             key={`bg-${idx}`}
@@ -3174,12 +3864,26 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
             </div>
             {feature.max_uses && (
               <FeatureUsesTracker 
-                maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers)}
+                maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                 featureId={featureId}
                 storedUses={usesState[featureId]}
                 onUsesChange={onUsesChange}
               />
             )}
+            {featurePool && (
+              <FeaturePoolTracker
+                poolMax={featurePool.max}
+                featureId={`${featureId}-pool`}
+                poolName={featurePool.name}
+                storedValue={poolState[`${featureId}-pool`]}
+                onPoolChange={onPoolChange}
+              />
+            )}
+            <StanceSelector
+              feature={feature}
+              activeStance={activeStances?.[featureId]}
+              onStanceChange={onStanceChange}
+            />
             {feature.description && (
               <FeatureDescriptionBlock
                 featureId={featureId}
@@ -3193,12 +3897,20 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
         })}
         
         {/* Feats */}
-        {feats.map((feat, idx) => {
-          // Get source type from feat
-          const sourceType = getSourceType(feat);
-          // Get source level if available
-          const sourceLevel = isNewSourceFormat(feat) ? feat.source.level : null;
-          const featId = feat.id || `feat-${feat.name || idx}`;
+        {feats.map((featEntry, idx) => {
+          const joinedFeat = getJoinedFeat(featEntry);
+          const feat = joinedFeat || featEntry;
+          const normalizedChoices = normalizeFeatChoices(featEntry);
+          const sourceType = getSourceType(featEntry) || getSourceType(feat);
+          const sourceLevel = isNewSourceFormat(featEntry)
+            ? featEntry.source.level
+            : (isNewSourceFormat(feat) ? feat.source.level : null);
+          const featId = featEntry.id || feat.id || `feat-${feat.name || idx}`;
+          const featName = feat.name || featEntry.name || 'Unnamed Feat';
+          const featDescription = feat.description || featEntry.description;
+          const featMaxUses = feat.max_uses ?? featEntry.max_uses;
+          const featurePool = getFeaturePool(feat, character.level, abilityModifiers);
+          const hasChoiceSummary = Boolean(normalizedChoices?.asi || (normalizedChoices?.grantedSpells || []).length > 0);
           
           return (
             <div
@@ -3210,29 +3922,52 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
               }}
             >
               <div className="feature-header">
-                <h3 className="feature-name">{feat.name || 'Unnamed Feat'}</h3>
+                <h3 className="feature-name">{featName}</h3>
                 {sourceType && <span className="feature-source">{sourceType}{sourceLevel ? ` (Level ${sourceLevel})` : ''}</span>}
               </div>
-              {feat.max_uses && (
+              {featMaxUses && (
                 <FeatureUsesTracker 
-                  maxUses={calculateMaxUses(feat.max_uses, proficiencyBonus, abilityModifiers)}
+                  maxUses={calculateMaxUses(featMaxUses, proficiencyBonus, abilityModifiers, character.level)}
                   featureId={featId}
                   storedUses={usesState[featId]}
                   onUsesChange={onUsesChange}
                 />
               )}
-              {feat.description && (
+              {featurePool && (
+                <FeaturePoolTracker
+                  poolMax={featurePool.max}
+                  featureId={`${featId}-pool`}
+                  poolName={featurePool.name}
+                  storedValue={poolState[`${featId}-pool`]}
+                  onPoolChange={onPoolChange}
+                />
+              )}
+              <StanceSelector
+                feature={feat}
+                activeStance={activeStances?.[featId]}
+                onStanceChange={onStanceChange}
+              />
+              {featDescription && (
                 <FeatureDescriptionBlock
                   featureId={featId}
-                  description={feat.description}
+                  description={featDescription}
                   expanded={!!expandedDescriptions[featId]}
                   onToggle={onDescriptionToggle}
                 />
               )}
-              {feat.choices && (
-                <p className="feature-choices">
-                  <strong>Choices:</strong> {JSON.stringify(feat.choices)}
-                </p>
+              {hasChoiceSummary && (
+                <div className="feature-choices">
+                  {normalizedChoices.asi && (
+                    <p>
+                      <strong>ASI:</strong> +{normalizedChoices.asi.amount} {normalizedChoices.asi.ability.charAt(0).toUpperCase() + normalizedChoices.asi.ability.slice(1)}
+                    </p>
+                  )}
+                  {normalizedChoices.grantedSpells.length > 0 && (
+                    <p>
+                      <strong>Spells:</strong> {normalizedChoices.grantedSpells.map((spell) => spell.name).join(', ')}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           );
@@ -3243,50 +3978,10 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
 }
 
 // Tab 6: Bio
-function BioTab({ character }) {
-  return (
-    <div className="bio-tab">
-      <h2>Bio</h2>
-      {character.bio ? (
-        <p className="bio-text">{character.bio}</p>
-      ) : (
-        <p className="info-text">No bio information added yet.</p>
-      )}
-    </div>
-  );
-}
-
-// Tab 7: Creatures
-function CreaturesTab({ character }) {
-  return (
-    <div className="creatures-tab">
-      <h2>Creatures & Companions</h2>
-      <p className="info-text">Creatures list coming soon...</p>
-    </div>
-  );
-}
-
 // HP Edit Modal
 function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier, setMaxHPModifier, maxHP, damageInput, setDamageInput, isOpen, onClose }) {
   const displayMaxHP = maxHP + maxHPModifier;
   const crossIconSrc = new URL('../assets/icons/util/cross.svg', import.meta.url).href;
-  const [assetsLoaded, setAssetsLoaded] = useState({
-    journal: false,
-    damage: false,
-    healing: false
-  });
-
-  useEffect(() => {
-    if (isOpen) {
-      setAssetsLoaded({ journal: false, damage: false, healing: false });
-    }
-  }, [isOpen]);
-
-  const markAssetLoaded = (key) => {
-    setAssetsLoaded((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
-  };
-
-  const areAssetsReady = assetsLoaded.journal && assetsLoaded.damage && assetsLoaded.healing;
 
   // Check if input is a valid positive integer
   const parsedAmount = parseInt(damageInput);
@@ -3323,20 +4018,12 @@ function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier
 
   return (
     <div className="hp-modal-overlay" onClick={onClose}>
-      <div className={`hp-modal ${areAssetsReady ? '' : 'hp-modal-pending'}`} onClick={onClose}>
+      <div className="hp-modal" onClick={onClose}>
         <img
-          src="/Journal.png"
+          src="/textures/materials/Journal.png"
           alt=""
           className="hp-modal-bg"
-          onLoad={() => markAssetLoaded('journal')}
-          onError={() => markAssetLoaded('journal')}
         />
-
-        {!areAssetsReady && (
-          <div className="hp-modal-loading">
-            <img src="/crest.png" alt="" className="hp-modal-loading-crest" />
-          </div>
-        )}
         
         <button className="hp-modal-close" onClick={onClose} aria-label="Close HP modal">
           <span className="icon-cross" style={{ '--icon-url': `url(${crossIconSrc})` }} aria-hidden="true" />
@@ -3409,8 +4096,6 @@ function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier
                   src="/Damage.png"
                   alt=""
                   className="hp-action-icon"
-                  onLoad={() => markAssetLoaded('damage')}
-                  onError={() => markAssetLoaded('damage')}
                 />
               </button>
               <input 
@@ -3424,8 +4109,6 @@ function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier
                   src="/Healing.png"
                   alt=""
                   className="hp-action-icon"
-                  onLoad={() => markAssetLoaded('healing')}
-                  onError={() => markAssetLoaded('healing')}
                 />
               </button>
             </div>
@@ -3466,7 +4149,10 @@ SkillsTab.propTypes = {
 SpellsTab.propTypes = {
   character: PropTypes.object.isRequired,
   spells: PropTypes.arrayOf(PropTypes.object).isRequired,
-  loading: PropTypes.bool
+  loading: PropTypes.bool,
+  proficiencyBonus: PropTypes.number,
+  derivedMods: PropTypes.object,
+  onSpellsUpdate: PropTypes.func
 };
 
 InventoryTab.propTypes = {};
