@@ -135,6 +135,45 @@ npm run build
 npm run preview
 ```
 
+## Deploy (Recommended)
+
+This app is a static Vite build, so Vercel and Netlify both work well.
+
+### Option A: Vercel (quickest)
+
+1. Push this repo to GitHub.
+2. In Vercel, click **Add New Project** and import the repo.
+3. Set these project settings:
+   - Root Directory: `app`
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+4. Add environment variables:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+5. Deploy.
+
+`vercel.json` is included to handle client-side routes with `BrowserRouter`.
+
+### Option B: Netlify
+
+1. In Netlify, create a new site from your GitHub repo.
+2. Set build settings:
+   - Base directory: `app`
+   - Build command: `npm run build`
+   - Publish directory: `app/dist`
+3. Add environment variables:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+4. Deploy.
+
+`public/_redirects` is included so route refreshes do not 404.
+
+### Share with Friends
+
+After deploy, send them the site URL. Because this is a PWA, they can install it:
+- Mobile: browser menu -> **Add to Home Screen**
+- Desktop: use browser install prompt/icon
+
 ## Project Structure
 
 ```
