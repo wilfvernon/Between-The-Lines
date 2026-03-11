@@ -140,6 +140,31 @@ describe('bonusEngine', () => {
         shieldBonus: 2
       });
     });
+
+    it('should ignore select container benefits until the UI resolves a choice', () => {
+      const features = [
+        {
+          id: 'feat-4',
+          name: 'Versatile Guard',
+          benefits: {
+            type: 'select',
+            select: {
+              choices: ['1H', '2H'],
+              '2H': { type: 'ac_bonus', shield_ignore: true }
+            }
+          }
+        }
+      ];
+
+      const bonuses = collectBonuses({
+        items: [],
+        features,
+        baseCharacterData: {},
+        overrides: []
+      });
+
+      expect(bonuses).toEqual([]);
+    });
   });
 
   describe('deriveCharacterStats', () => {

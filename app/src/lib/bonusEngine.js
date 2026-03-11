@@ -352,6 +352,15 @@ const benefitHandlers = {
   },
 
   /**
+   * select: Choice container for UI-managed feature selections
+   * Structure: { type: "select", select: { choices: [...], ...choiceBenefitObjects } }
+   * The active choice is resolved in CharacterSheet and emitted as conditional bonuses there.
+   */
+  select: () => {
+    return [];
+  },
+
+  /**
    * ac_bonus: Flat bonus to armor class
    * Structure: { type: "ac_bonus", value: 2 }
    */
