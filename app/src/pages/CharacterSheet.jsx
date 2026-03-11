@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import { extractFeatAbilityScoreImprovements, getJoinedFeat, normalizeFeatChoices } from '../lib/featChoices';
 import AbilityScoreInspector from '../components/AbilityScoreInspector';
 import ACInspector from '../components/ACInspector';
+import ConditionsModal from '../components/ConditionsModal';
 import './CharacterSheet.css';
 
 // Extracted tab components
@@ -423,7 +424,8 @@ const getFeaturePool = (feature, characterLevel, abilityModifiers) => {
   if (!poolBenefit) return null;
 
   let poolMax = 0;
-  if (poolBenefit?.value === 'formula' && poolBenefit?.formula) {
+  const valueMode = String(poolBenefit?.value || '').toLowerCase().trim();
+  if ((valueMode === 'formula' || (!valueMode && poolBenefit?.formula)) && poolBenefit?.formula) {
     poolMax = evaluatePoolFormula(poolBenefit.formula, characterLevel, abilityModifiers);
   } else {
     poolMax = Math.max(0, Number(poolBenefit?.value) || 0);
@@ -431,9 +433,23 @@ const getFeaturePool = (feature, characterLevel, abilityModifiers) => {
 
   if (poolMax <= 0) return null;
 
+  const rawPoolType =
+    poolBenefit?.pool_type ??
+    poolBenefit?.poolType ??
+    poolBenefit?.pooltype ??
+    null;
+
+  const rawBarrierFill =
+    poolBenefit?.barrier_fill ??
+    poolBenefit?.barrierFill ??
+    poolBenefit?.barrierfill ??
+    null;
+
   return {
     name: poolBenefit?.name || null,
-    max: poolMax
+    max: poolMax,
+    poolType: String(rawPoolType || '').toLowerCase().trim() || null,
+    barrierFill: String(rawBarrierFill || '').toLowerCase().trim() || null,
   };
 };
 
@@ -543,11 +559,27 @@ function CharacterSheet() {
   const [currentHP, setCurrentHP] = useState(null);
   const [tempHP, setTempHP] = useState(0);
   const [maxHPModifier, setMaxHPModifier] = useState(0);
+  const [deathSaveSuccesses, setDeathSaveSuccesses] = useState(0);
+  const [deathSaveFailures, setDeathSaveFailures] = useState(0);
   const [isHPModalOpen, setIsHPModalOpen] = useState(false);
   const [damageInput, setDamageInput] = useState('');
   const [isPortraitHighlighted, setIsPortraitHighlighted] = useState(true);
   const [isLongRestConfirmOpen, setIsLongRestConfirmOpen] = useState(false);
   const [longRestVersion, setLongRestVersion] = useState(0);
+
+  // Conditions modal state
+  const [isConditionsModalOpen, setIsConditionsModalOpen] = useState(false);
+  const [activeConditions, setActiveConditions] = useState([]);
+  const [exhaustionLevel, setExhaustionLevel] = useState(0);
+  const [conditionsLoaded, setConditionsLoaded] = useState(false);
+
+  const handleToggleCondition = (conditionId) => {
+    setActiveConditions(prev =>
+      prev.includes(conditionId)
+        ? prev.filter(c => c !== conditionId)
+        : [...prev, conditionId]
+    );
+  };
 
   // Stats Inspector Modal state
   const [inspectorState, setInspectorState] = useState({
@@ -587,6 +619,63 @@ function CharacterSheet() {
   // Active stances for stance-type features (stored in localStorage)
   const [activeStances, setActiveStances] = useState({});
   const [activeStancesLoaded, setActiveStancesLoaded] = useState(false);
+
+  // Conditions localStorage management
+  const conditionsStorageKey = character?.id
+    ? `conditions:${character.id}`
+    : null;
+
+  useEffect(() => {
+    if (!conditionsStorageKey) {
+      setActiveConditions([]);
+      setExhaustionLevel(0);
+      setConditionsLoaded(false);
+      return;
+    }
+
+    try {
+      const stored = localStorage.getItem(conditionsStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          const storedConditions = Array.isArray(parsed.activeConditions)
+            ? parsed.activeConditions.filter(c => typeof c === 'string')
+            : [];
+          const storedExhaustion = Number.isInteger(parsed.exhaustionLevel)
+            ? Math.max(0, Math.min(6, parsed.exhaustionLevel))
+            : 0;
+
+          setActiveConditions(storedConditions);
+          setExhaustionLevel(storedExhaustion);
+          setConditionsLoaded(true);
+          return;
+        }
+      }
+    } catch {
+      // Ignore storage read/parse errors (private mode or corrupted data)
+    }
+
+    setActiveConditions([]);
+    setExhaustionLevel(0);
+    setConditionsLoaded(true);
+  }, [conditionsStorageKey]);
+
+  useEffect(() => {
+    if (!conditionsStorageKey) return;
+    if (!conditionsLoaded) return;
+
+    try {
+      localStorage.setItem(
+        conditionsStorageKey,
+        JSON.stringify({
+          activeConditions,
+          exhaustionLevel,
+        })
+      );
+    } catch {
+      // Ignore storage write errors (private mode or quota exceeded)
+    }
+  }, [activeConditions, exhaustionLevel, conditionsStorageKey, conditionsLoaded]);
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -882,10 +971,18 @@ function CharacterSheet() {
     const savedHPState = localStorage.getItem(`hp_state_${character.id}`);
     if (savedHPState) {
       try {
-        const { currentHP: savedCurrent, tempHP: savedTemp, maxHPModifier: savedModifier } = JSON.parse(savedHPState);
+        const {
+          currentHP: savedCurrent,
+          tempHP: savedTemp,
+          maxHPModifier: savedModifier,
+          deathSaveSuccesses: savedSuccesses,
+          deathSaveFailures: savedFailures,
+        } = JSON.parse(savedHPState);
         setCurrentHP(savedCurrent);
         setTempHP(savedTemp ?? 0);
         setMaxHPModifier(savedModifier ?? 0);
+        setDeathSaveSuccesses(Math.max(0, Math.min(3, Number(savedSuccesses) || 0)));
+        setDeathSaveFailures(Math.max(0, Math.min(3, Number(savedFailures) || 0)));
         return;
       } catch (e) {
         console.error('Failed to parse saved HP state:', e);
@@ -903,6 +1000,8 @@ function CharacterSheet() {
     }
     setTempHP(0);
     setMaxHPModifier(0);
+    setDeathSaveSuccesses(0);
+    setDeathSaveFailures(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [character?.id]);
 
@@ -913,10 +1012,20 @@ function CharacterSheet() {
     const hpState = {
       currentHP,
       tempHP,
-      maxHPModifier
+      maxHPModifier,
+      deathSaveSuccesses,
+      deathSaveFailures,
     };
     localStorage.setItem(`hp_state_${character.id}`, JSON.stringify(hpState));
-  }, [character?.id, currentHP, tempHP, maxHPModifier]);
+  }, [character?.id, currentHP, tempHP, maxHPModifier, deathSaveSuccesses, deathSaveFailures]);
+
+  // Recovering to above 0 HP clears death saves.
+  useEffect(() => {
+    if (currentHP === null || currentHP <= 0) return;
+    if (deathSaveSuccesses === 0 && deathSaveFailures === 0) return;
+    setDeathSaveSuccesses(0);
+    setDeathSaveFailures(0);
+  }, [currentHP, deathSaveSuccesses, deathSaveFailures]);
 
   // Lock body scroll when modal is open
   useEffect(() => {
@@ -1362,6 +1471,62 @@ function CharacterSheet() {
   const initiative = derivedStats.initiative;
   const campIconUrl = new URL('../assets/icons/location/camp.svg', import.meta.url).href;
 
+  const barrierPools = (() => {
+    const entries = [];
+
+    const collectBarrierPool = (feature, featureId) => {
+      if (!feature || !featureId) return;
+      const featurePool = getFeaturePool(feature, character.level, derivedMods);
+      if (!featurePool || featurePool.poolType !== 'barrier') return;
+
+      const poolStateKey = `${featureId}-pool`;
+      const stored = poolState?.[poolStateKey];
+      const current = Number.isFinite(stored)
+        ? Math.max(0, Math.min(featurePool.max, stored))
+        : featurePool.max;
+
+      entries.push({
+        id: poolStateKey,
+        name: featurePool.name || feature.name || 'Barrier',
+        current,
+        max: featurePool.max,
+        barrierFillAmount: (() => {
+          const fill = featurePool.barrierFill;
+          if (!fill) return 0;
+          const abilityFill = Number(derivedMods?.[fill]);
+          if (Number.isFinite(abilityFill)) return Math.max(0, Math.floor(abilityFill));
+          const staticFill = Number(fill);
+          if (Number.isFinite(staticFill)) return Math.max(0, Math.floor(staticFill));
+          return 0;
+        })(),
+        barrierFillLabel: (() => {
+          const fill = featurePool.barrierFill;
+          if (!fill) return '';
+          if (Number.isFinite(Number(derivedMods?.[fill]))) return fill.slice(0, 3).toUpperCase();
+          return 'Fill';
+        })(),
+      });
+    };
+
+    (character.features || []).forEach((feature, idx) => {
+      const featureId = feature?.id || `feature-${feature?.name || idx}`;
+      collectBarrierPool(feature, featureId);
+    });
+
+    (character.feats || []).forEach((featEntry, idx) => {
+      const joinedFeat = getJoinedFeat(featEntry);
+      const feat = joinedFeat || featEntry;
+      if (!feat) return;
+      const featId = featEntry?.id || feat.id || `feat-${feat.name || idx}`;
+      collectBarrierPool(feat, featId);
+    });
+
+    return entries;
+  })();
+
+  const barrierCurrentTotal = barrierPools.reduce((sum, pool) => sum + pool.current, 0);
+  const barrierMaxTotal = barrierPools.reduce((sum, pool) => sum + pool.max, 0);
+
   return (
     <div className="character-sheet">
       {/* Admin Character Selector */}
@@ -1400,16 +1565,28 @@ function CharacterSheet() {
               <span className="char-level">
                 Lvl {character.level} {character.classes.map(c => `${c.class}${c.subclass ? ` (${c.subclass})` : ''}`).join(' / ')}
               </span>
-              <button
-                type="button"
-                className="long-rest-button clickable-underline"
-                onClick={() => setIsLongRestConfirmOpen(true)}
-                aria-label="Take a long rest"
-                title="Take a long rest"
-              >
-                <img src={campIconUrl} alt="" className="long-rest-icon" />
-                <span className="long-rest-label">Long Rest</span>
-              </button>
+              <div className="character-rest-and-conditions">
+                <button
+                  type="button"
+                  className="long-rest-button clickable-underline"
+                  onClick={() => setIsLongRestConfirmOpen(true)}
+                  aria-label="Take a long rest"
+                  title="Take a long rest"
+                >
+                  <img src={campIconUrl} alt="" className="long-rest-icon" />
+                </button>
+                <button
+                  type="button"
+                  className="conditions-header clickable-underline"
+                  onClick={() => setIsConditionsModalOpen(true)}
+                  aria-label="Open conditions tracker"
+                >
+                  Conditions
+                  {activeConditions.length > 0 && (
+                    <span className="conditions-active-count">{activeConditions.length}</span>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
           <div className="header-right">
@@ -1428,6 +1605,9 @@ function CharacterSheet() {
                   <span className={maxHPModifier !== 0 ? 'hp-value-mod' : 'hp-value-current'}>
                     {effectiveDisplayMaxHP}
                   </span>
+                  {barrierCurrentTotal > 0 && (
+                    <span className="hp-value-barrier">+{barrierCurrentTotal}</span>
+                  )}
                   {tempHP > 0 && (
                     <span className="hp-value-temp">+{tempHP}</span>
                   )}
@@ -1649,6 +1829,14 @@ function CharacterSheet() {
           setTempHP={setTempHP}
           maxHPModifier={maxHPModifier}
           setMaxHPModifier={setMaxHPModifier}
+          barrierPools={barrierPools}
+          barrierCurrentTotal={barrierCurrentTotal}
+          barrierMaxTotal={barrierMaxTotal}
+          onBarrierPoolChange={handlePoolChange}
+          deathSaveSuccesses={deathSaveSuccesses}
+          setDeathSaveSuccesses={setDeathSaveSuccesses}
+          deathSaveFailures={deathSaveFailures}
+          setDeathSaveFailures={setDeathSaveFailures}
           maxHP={effectiveBaseMaxHP}
           damageInput={damageInput}
           setDamageInput={setDamageInput}
@@ -1867,6 +2055,15 @@ function CharacterSheet() {
           </div>
         </div>
       )}
+
+      <ConditionsModal
+        isOpen={isConditionsModalOpen}
+        onClose={() => setIsConditionsModalOpen(false)}
+        activeConditions={activeConditions}
+        onToggleCondition={handleToggleCondition}
+        exhaustionLevel={exhaustionLevel}
+        onSetExhaustion={setExhaustionLevel}
+      />
 
       {isLongRestConfirmOpen && (
         <div className="long-rest-modal-overlay" onClick={() => setIsLongRestConfirmOpen(false)}>
@@ -3494,15 +3691,17 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
   };
 
   let subclassFeatures = character.features?.filter(f => getSourceType(f) === 'subclass') || [];
+  let invocationFeatures = character.features?.filter(f => getSourceType(f) === 'invocation') || [];
   let fightingStyleFeatures = character.features?.filter(f => getSourceType(f) === 'fighting') || [];
   let classFeatures = character.features?.filter(f => getSourceType(f) === 'class') || [];
 
   // Sort by level
   subclassFeatures = [...subclassFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
+  invocationFeatures = [...invocationFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   fightingStyleFeatures = [...fightingStyleFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   classFeatures = [...classFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   
-  if (subclassFeatures.length === 0 && fightingStyleFeatures.length === 0 && classFeatures.length === 0) {
+  if (subclassFeatures.length === 0 && invocationFeatures.length === 0 && fightingStyleFeatures.length === 0 && classFeatures.length === 0) {
     return (
       <div className="class-features">
         <p className="info-text">No class features found.</p>
@@ -3521,6 +3720,66 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
               const sourceDisplay = getSourceDisplayName(feature);
               const featureLevel = getSourceLevel(feature);
               const featureId = feature.id || `subclass-${feature.name || idx}`;
+              const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              return (
+                <div
+                  key={idx}
+                  className="feature-item"
+                  onClick={(event) => {
+                    if (isFeatureToggleIgnored(event.target)) return;
+                    onDescriptionToggle(featureId);
+                  }}
+                >
+                  <div className="feature-header">
+                    <h3 className="feature-name">{feature.name}</h3>
+                    {featureLevel && <span className="feature-source">{sourceDisplay} — {featureLevel}</span>}
+                  </div>
+                  {feature.max_uses && (
+                    <FeatureUsesTracker 
+                      maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
+                      featureId={featureId}
+                      storedUses={usesState[featureId]}
+                      onUsesChange={onUsesChange}
+                    />
+                  )}
+                  {featurePool && (
+                    <FeaturePoolTracker
+                      poolMax={featurePool.max}
+                      featureId={`${featureId}-pool`}
+                      poolName={featurePool.name}
+                      storedValue={poolState[`${featureId}-pool`]}
+                      onPoolChange={onPoolChange}
+                    />
+                  )}
+                  <StanceSelector
+                    feature={feature}
+                    activeStance={activeStances?.[featureId]}
+                    onStanceChange={onStanceChange}
+                  />
+                  {feature.description && (
+                    <FeatureDescriptionBlock
+                      featureId={featureId}
+                      description={feature.description}
+                      expanded={!!expandedDescriptions[featureId]}
+                      onToggle={onDescriptionToggle}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Eldritch Invocations */}
+      {invocationFeatures.length > 0 && (
+        <div className="feature-group">
+          <h4 className="feature-group-header">Eldritch Invocations</h4>
+          <div className="feature-list">
+            {invocationFeatures.map((feature, idx) => {
+              const sourceDisplay = getSourceDisplayName(feature);
+              const featureLevel = getSourceLevel(feature);
+              const featureId = feature.id || `invocation-${feature.name || idx}`;
               const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
               return (
                 <div
@@ -3979,9 +4238,38 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
 
 // Tab 6: Bio
 // HP Edit Modal
-function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier, setMaxHPModifier, maxHP, damageInput, setDamageInput, isOpen, onClose }) {
+function HPEditModal({
+  currentHP,
+  setCurrentHP,
+  tempHP,
+  setTempHP,
+  maxHPModifier,
+  setMaxHPModifier,
+  barrierPools,
+  barrierCurrentTotal,
+  barrierMaxTotal,
+  onBarrierPoolChange,
+  deathSaveSuccesses,
+  setDeathSaveSuccesses,
+  deathSaveFailures,
+  setDeathSaveFailures,
+  maxHP,
+  damageInput,
+  setDamageInput,
+  isOpen,
+  onClose,
+}) {
   const displayMaxHP = maxHP + maxHPModifier;
   const crossIconSrc = '/icons/util/cross.svg';
+
+  const setBarrierPoolValue = (pool, nextValue) => {
+    const normalized = Math.max(0, Math.min(pool.max, nextValue));
+    onBarrierPoolChange?.(pool.id, normalized);
+  };
+
+  const adjustBarrierPool = (pool, delta) => {
+    setBarrierPoolValue(pool, pool.current + delta);
+  };
 
   // Check if input is a valid positive integer
   const parsedAmount = parseInt(damageInput);
@@ -3991,15 +4279,28 @@ function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier
     const damageAmount = parseInt(damageInput);
     // Only allow positive integers
     if (!damageInput || isNaN(damageAmount) || damageAmount <= 0 || damageInput.includes('.') || damageInput.includes('-')) return;
-    
-    let newCurrent = currentHP - damageAmount;
-    
-    // Damage reduces temp HP first, then current HP
-    if (tempHP > 0) {
-      const tempDamage = Math.min(tempHP, damageAmount);
-      setTempHP(tempHP - tempDamage);
-      newCurrent = currentHP - (damageAmount - tempDamage);
+
+    let remainingDamage = damageAmount;
+
+    // Damage reduces barrier pools first.
+    if (Array.isArray(barrierPools) && barrierPools.length > 0) {
+      barrierPools.forEach((pool) => {
+        if (remainingDamage <= 0) return;
+        const absorbed = Math.min(pool.current, remainingDamage);
+        if (absorbed <= 0) return;
+        onBarrierPoolChange?.(pool.id, pool.current - absorbed);
+        remainingDamage -= absorbed;
+      });
     }
+
+    // Then temp HP, then current HP.
+    if (remainingDamage > 0 && tempHP > 0) {
+      const tempDamage = Math.min(tempHP, remainingDamage);
+      setTempHP(tempHP - tempDamage);
+      remainingDamage -= tempDamage;
+    }
+
+    let newCurrent = currentHP - remainingDamage;
     
     newCurrent = Math.max(0, Math.min(newCurrent, displayMaxHP));
     setCurrentHP(newCurrent);
@@ -4017,8 +4318,8 @@ function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier
   if (!isOpen) return null;
 
   return (
-    <div className="hp-modal-overlay" onClick={onClose}>
-      <div className="hp-modal" onClick={onClose}>
+    <div className="hp-modal-overlay">
+      <div className="hp-modal">
         <img
           src="/textures/materials/Journal.png"
           alt=""
@@ -4044,12 +4345,119 @@ function HPEditModal({ currentHP, setCurrentHP, tempHP, setTempHP, maxHPModifier
               <span className={maxHPModifier !== 0 ? 'hp-total-value hp-value-mod' : 'hp-total-value hp-value-current'}>
                 {displayMaxHP}
               </span>
+              {barrierCurrentTotal > 0 && (
+                <span className="hp-total-value hp-value-barrier">+{barrierCurrentTotal}</span>
+              )}
               {tempHP > 0 && (
                 <span className="hp-total-value hp-value-temp">+{tempHP}</span>
               )}
             </div>
             <span className="hp-total-label hp-total-label-bottom">HP</span>
           </div>
+
+          {barrierPools.length > 0 && (
+            <div className="hp-barrier-section" aria-label="Barrier pool tracker">
+              <div className="hp-barrier-summary">
+                <span className="hp-barrier-title">Barrier</span>
+                <span className="hp-barrier-total">{barrierCurrentTotal}/{barrierMaxTotal}</span>
+              </div>
+              <div className="hp-barrier-list">
+                {barrierPools.map((pool) => (
+                  <div key={pool.id} className="hp-barrier-row">
+                    <span className="hp-barrier-name">{pool.name}</span>
+                    <div className="hp-barrier-controls">
+                      <button
+                        type="button"
+                        className="hp-barrier-btn"
+                        onClick={() => adjustBarrierPool(pool, -1)}
+                        disabled={pool.current <= 0}
+                        aria-label={`Reduce ${pool.name} by 1`}
+                      >
+                        -
+                      </button>
+                      <input
+                        className="hp-barrier-input"
+                        type="number"
+                        min="0"
+                        max={pool.max}
+                        value={pool.current}
+                        onChange={(e) => {
+                          const nextValue = Math.max(0, Math.min(pool.max, parseInt(e.target.value, 10) || 0));
+                          onBarrierPoolChange?.(pool.id, nextValue);
+                        }}
+                      />
+                      <span className="hp-barrier-max">/ {pool.max}</span>
+                      <button
+                        type="button"
+                        className="hp-barrier-btn"
+                        onClick={() => adjustBarrierPool(pool, 1)}
+                        disabled={pool.current >= pool.max}
+                        aria-label={`Increase ${pool.name} by 1`}
+                      >
+                        +
+                      </button>
+                      <button
+                        type="button"
+                        className="hp-barrier-fill-btn"
+                        onClick={() => setBarrierPoolValue(pool, pool.max)}
+                        disabled={pool.current >= pool.max}
+                        aria-label={`Restore ${pool.name} to full`}
+                      >
+                        Max
+                      </button>
+                      {pool.barrierFillAmount > 0 && (
+                        <button
+                          type="button"
+                          className="hp-barrier-fill-btn"
+                          onClick={() => adjustBarrierPool(pool, pool.barrierFillAmount)}
+                          disabled={pool.current >= pool.max}
+                          aria-label={`Add ${pool.barrierFillAmount} to ${pool.name}`}
+                        >
+                          +{pool.barrierFillAmount} {pool.barrierFillLabel}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {currentHP === 0 && (
+            <div className="hp-death-saves" aria-label="Death saves tracker">
+              <span className="hp-death-saves-title">Death Saves</span>
+              <div className="hp-death-saves-rows">
+                <div className="hp-death-saves-row">
+                  <span className="hp-death-saves-label success">Success</span>
+                  <div className="hp-death-saves-marks" role="group" aria-label="Death save successes">
+                    {[1, 2, 3].map((n) => (
+                      <button
+                        key={`success-${n}`}
+                        type="button"
+                        className={`hp-death-mark success${deathSaveSuccesses >= n ? ' active' : ''}`}
+                        onClick={() => setDeathSaveSuccesses(deathSaveSuccesses === n ? n - 1 : n)}
+                        aria-label={`Set ${n} death save success${n > 1 ? 'es' : ''}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="hp-death-saves-row">
+                  <span className="hp-death-saves-label failure">Failure</span>
+                  <div className="hp-death-saves-marks" role="group" aria-label="Death save failures">
+                    {[1, 2, 3].map((n) => (
+                      <button
+                        key={`failure-${n}`}
+                        type="button"
+                        className={`hp-death-mark failure${deathSaveFailures >= n ? ' active' : ''}`}
+                        onClick={() => setDeathSaveFailures(deathSaveFailures === n ? n - 1 : n)}
+                        aria-label={`Set ${n} death save failure${n > 1 ? 's' : ''}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="hp-fields-row">
             {/* Current HP */}
@@ -4168,6 +4576,21 @@ HPEditModal.propTypes = {
   setTempHP: PropTypes.func.isRequired,
   maxHPModifier: PropTypes.number.isRequired,
   setMaxHPModifier: PropTypes.func.isRequired,
+  barrierPools: PropTypes.arrayOf(PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    name: PropTypes.string,
+    current: PropTypes.number.isRequired,
+    max: PropTypes.number.isRequired,
+    barrierFillAmount: PropTypes.number,
+    barrierFillLabel: PropTypes.string,
+  })).isRequired,
+  barrierCurrentTotal: PropTypes.number.isRequired,
+  barrierMaxTotal: PropTypes.number.isRequired,
+  onBarrierPoolChange: PropTypes.func.isRequired,
+  deathSaveSuccesses: PropTypes.number.isRequired,
+  setDeathSaveSuccesses: PropTypes.func.isRequired,
+  deathSaveFailures: PropTypes.number.isRequired,
+  setDeathSaveFailures: PropTypes.func.isRequired,
   maxHP: PropTypes.number.isRequired,
   damageInput: PropTypes.string.isRequired,
   setDamageInput: PropTypes.func.isRequired,
@@ -4176,3 +4599,4 @@ HPEditModal.propTypes = {
 };
 
 export default CharacterSheet;
+export { HPEditModal };

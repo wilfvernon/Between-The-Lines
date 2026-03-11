@@ -1,0 +1,350 @@
+/* ConditionsModal – accordion list layout */
+
+.conditions-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  backdrop-filter: blur(3px);
+}
+
+.conditions-modal {
+  position: relative;
+  background: url('/textures/materials/parchment.png') center / 300% auto;
+  border: 3px solid #5b2d0a;
+  border-radius: 8px;
+  width: 92%;
+  max-width: 500px;
+  max-height: 80vh;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  animation: conditions-open 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  overflow: hidden;
+}
+
+@keyframes conditions-open {
+  from { opacity: 0; transform: scale(0.88); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Header ── */
+.conditions-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px 10px 18px;
+  border-bottom: 2px solid rgba(91, 41, 10, 0.3);
+  flex-shrink: 0;
+}
+
+.conditions-modal-header h2 {
+  margin: 0;
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #3d2817;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.conditions-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b5344;
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  opacity: 0.75;
+}
+.conditions-modal-close:hover { opacity: 1; background: rgba(91,41,10,0.1); color: #3d2817; }
+
+/* ── Scrollable body ── */
+.conditions-modal-body {
+  overflow-y: hidden;
+  flex: 1;
+  padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+.conditions-modal-body::-webkit-scrollbar,
+.conditions-section::-webkit-scrollbar { width: 6px; }
+.conditions-modal-body::-webkit-scrollbar-track,
+.conditions-section::-webkit-scrollbar-track { background: transparent; }
+.conditions-modal-body::-webkit-scrollbar-thumb,
+.conditions-section::-webkit-scrollbar-thumb { background: rgba(91,41,10,0.3); border-radius: 3px; }
+
+/* ── Shared chevron ── */
+.expand-chevron {
+  display: inline-block;
+  font-size: 1rem;
+  color: rgba(91, 41, 10, 0.45);
+  transition: transform 0.2s ease, color 0.15s;
+  line-height: 1;
+}
+
+/* ── Exhaustion (sticky) ── */
+.exhaustion-section {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: url('/textures/materials/parchment.png') center / 300% auto;
+  border-bottom: 2px solid rgba(91, 41, 10, 0.25);
+  padding: 12px 18px 12px 18px;
+}
+
+/* Exhaustion header is now a full-width button */
+.exhaustion-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 10px;
+}
+.exhaustion-header-row:hover .expand-chevron { color: rgba(91,41,10,0.85); }
+.exhaustion-header-row.open .expand-chevron { transform: rotate(180deg); color: rgba(91,41,10,0.85); }
+
+.exhaustion-label {
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #5c3a1e;
+}
+
+.exhaustion-boxes {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.exhaustion-box {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border: 2px solid rgba(91, 41, 10, 0.35);
+  border-radius: 5px;
+  background: rgba(245, 232, 204, 0.5);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  overflow: hidden;
+}
+.exhaustion-box:hover { border-color: rgba(91,41,10,0.65); box-shadow: 0 2px 6px rgba(0,0,0,0.18); }
+
+.exhaustion-box-num {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Cinzel', serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: rgba(91, 41, 10, 0.2);
+  pointer-events: none;
+  user-select: none;
+  line-height: 1;
+}
+
+.exhaustion-box-icon {
+  width: 26px;
+  height: 26px;
+  opacity: 0.32;
+  filter: sepia(60%) brightness(0.7);
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+}
+
+.exhaustion-box.active {
+  background: rgba(120, 40, 10, 0.18);
+  border-color: #7a2e0a;
+  box-shadow: inset 0 0 8px rgba(120,40,10,0.2), 0 2px 5px rgba(0,0,0,0.2);
+}
+.exhaustion-box.active .exhaustion-box-num { color: rgba(91,41,10,0.55); }
+.exhaustion-box.active .exhaustion-box-icon { opacity: 0.9; filter: sepia(80%) saturate(1.2) brightness(0.65); }
+
+.exhaustion-box.active.exhaustion-death {
+  background: rgba(140, 10, 10, 0.25);
+  border-color: #8b0000;
+  box-shadow: inset 0 0 10px rgba(140,10,10,0.3), 0 2px 6px rgba(0,0,0,0.3);
+}
+.exhaustion-box.active.exhaustion-death .exhaustion-box-icon {
+  opacity: 1;
+  filter: sepia(100%) saturate(2.5) hue-rotate(-10deg) brightness(0.55);
+}
+
+/* Expandable exhaustion descriptions */
+.exhaustion-desc-list {
+  list-style: none;
+  margin: 12px 0 0 0;
+  padding: 0;
+  border-top: 1px solid rgba(91,41,10,0.18);
+  padding-top: 10px;
+}
+
+.exhaustion-desc-item {
+  padding: 3px 0;
+}
+
+.exhaustion-desc-heading {
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #5c3a1e;
+}
+
+.exhaustion-desc-text {
+  font-family: 'Goudy Bookletter 1911', 'Georgia', serif;
+  font-size: 0.72rem;
+  color: #4a3020;
+  line-height: 1.5;
+}
+
+/* ── Conditions list ── */
+.conditions-section {
+  padding: 14px 18px 0 18px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 16px;
+}
+
+.conditions-section-label {
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #5c3a1e;
+  margin-bottom: 8px;
+}
+
+.conditions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Each condition row: [icon-btn] [name+chevron btn] then desc full-width below */
+.condition-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  border-bottom: 1px solid rgba(91, 41, 10, 0.12);
+  transition: background 0.15s;
+}
+.condition-row:last-child { border-bottom: none; }
+.condition-row.active { background: rgba(160, 20, 20, 0.06); }
+
+/* Icon-only toggle button */
+.condition-icon-btn {
+  grid-column: 1;
+  grid-row: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px 10px 8px 2px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.condition-icon-btn:hover .condition-icon { opacity: 0.75; }
+
+.condition-icon {
+  width: 28px;
+  height: 28px;
+  display: block;
+  opacity: 0.42;
+  filter: sepia(25%) brightness(0.75);
+  transition: opacity 0.15s, filter 0.15s;
+}
+.condition-row.active .condition-icon {
+  opacity: 1;
+  filter: brightness(0) saturate(100%) invert(13%) sepia(80%) saturate(3000%) hue-rotate(345deg) brightness(70%);
+}
+
+/* Name + chevron expand button — takes full remaining width */
+.condition-expand-row {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 10px 4px 10px 0;
+  text-align: left;
+}
+.condition-expand-row:hover .condition-name { opacity: 1; }
+.condition-expand-row:hover .expand-chevron { color: rgba(91,41,10,0.85); }
+.condition-expand-row.open .expand-chevron { transform: rotate(180deg); color: rgba(91,41,10,0.85); }
+
+.condition-name {
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #5c3a1e;
+  opacity: 0.65;
+  transition: opacity 0.15s, color 0.15s;
+  line-height: 1;
+}
+.condition-row.active .condition-name {
+  opacity: 1;
+  color: #8b1a1a;
+}
+
+/* Description drawer: spans both columns */
+.condition-desc-list {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  list-style: none;
+  margin: 0;
+  padding: 8px 4px 12px 40px;
+  border-top: 1px dashed rgba(91,41,10,0.15);
+}
+
+.condition-desc-item {
+  padding: 2px 0;
+  line-height: 1.55;
+}
+
+.condition-desc-heading {
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #5c3a1e;
+}
+
+.condition-desc-text {
+  font-family: 'Goudy Bookletter 1911', 'Georgia', serif;
+  font-size: 0.72rem;
+  color: #4a3020;
+  line-height: 1.55;
+}
+/* ── Responsive ── */
+@media (max-width: 480px) {
+  .conditions-modal { width: 97%; max-height: 85vh; }
+  .exhaustion-box { width: 38px; height: 38px; }
+  .condition-desc-list { padding-left: 10px; }
+}
