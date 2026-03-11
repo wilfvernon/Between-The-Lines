@@ -12,6 +12,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
   const [type, setType] = useState('');
   const [rarity, setRarity] = useState('');
   const [attunementRequired, setAttunementRequired] = useState('');
+  const [hidden, setHidden] = useState(false);
   const [description, setDescription] = useState('');
   const [benefits, setBenefits] = useState('');
   
@@ -28,6 +29,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     setType('');
     setRarity('');
     setAttunementRequired('');
+    setHidden(false);
     setDescription('');
     setBenefits('');
   };
@@ -39,6 +41,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     setType(prefill.type || '');
     setRarity(prefill.rarity || '');
     setAttunementRequired(prefill.requires_attunement || prefill.attunement_required || '');
+    setHidden(prefill.hidden === true || String(prefill.hidden).toLowerCase() === 'true');
     setDescription(prefill.description || '');
     if (prefill.benefits) {
       setBenefits(JSON.stringify(prefill.benefits, null, 2));
@@ -75,6 +78,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
       setType(scraped.type || '');
       setRarity(scraped.rarity || '');
       setAttunementRequired(scraped.requires_attunement || '');
+      setHidden(false);
       setDescription(scraped.description || '');
       if (scraped.benefits && (typeof scraped.benefits === 'object' || Array.isArray(scraped.benefits))) {
         setBenefits(JSON.stringify(scraped.benefits, null, 2));
@@ -115,6 +119,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
           type: type || null,
           rarity: rarity || null,
           requires_attunement: attunementRequired || null,
+          hidden,
           description,
           benefits: benefitsJson
         }, {
@@ -322,6 +327,20 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
               onChange={(e) => setAttunementRequired(e.target.value)} 
               placeholder="Yes / by a wizard / etc."
             />
+          </div>
+
+          <div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '24px' }}>
+              <input
+                type="checkbox"
+                checked={hidden}
+                onChange={(e) => setHidden(e.target.checked)}
+              />
+              Hidden
+            </label>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+              Hidden items will not apply benefits and will display as ??? in character sheet descriptions.
+            </div>
           </div>
         </div>
 

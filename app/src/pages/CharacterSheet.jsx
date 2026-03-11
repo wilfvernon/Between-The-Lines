@@ -122,6 +122,40 @@ const convertAbilityScoresToBonuses = (improvements = []) => {
   });
 };
 
+const magicItemRequiresAttunement = (magicItem) => {
+  if (!magicItem) return false;
+
+  const rawRequirement = magicItem.requires_attunement ?? magicItem.raw_data?.requires_attunement;
+  if (rawRequirement === null || rawRequirement === undefined || rawRequirement === false) return false;
+
+  if (typeof rawRequirement === 'string') {
+    const normalized = rawRequirement.trim().toLowerCase();
+    if (!normalized || normalized === 'no' || normalized === 'none' || normalized === 'false') {
+      return false;
+    }
+  }
+
+  return Boolean(rawRequirement);
+};
+
+const isMagicItemHidden = (magicItem) => {
+  if (!magicItem) return false;
+
+  const rawHidden = magicItem.hidden ?? magicItem.raw_data?.hidden;
+  if (rawHidden === null || rawHidden === undefined) return false;
+  if (rawHidden === true) return true;
+  if (rawHidden === false) return false;
+
+  if (typeof rawHidden === 'number') return rawHidden === 1;
+
+  if (typeof rawHidden === 'string') {
+    const normalized = rawHidden.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+
+  return Boolean(rawHidden);
+};
+
 // Helper to get bonuses for a specific ability
 const getAbilityBonuses = (allBonuses = [], abilityName) => {
   const targetKey = `ability.${abilityName}`;
@@ -261,7 +295,7 @@ const getBaseShieldProficiency = (character) => {
  * @param {Array} features - Character features (for bonus engine checks)
  * @returns {boolean} - True if proficient
  */
-const isArmorProficient = (armor, character, features = []) => {
+const isArmorProficient = (armor, character, features = [], featureStates = {}) => {
   if (!armor || !character) return false;
   
   // Get armor type level
@@ -287,8 +321,12 @@ const isArmorProficient = (armor, character, features = []) => {
   
   // Check for feature-granted armor proficiency upgrades
   for (const feature of features) {
-    if (!Array.isArray(feature.benefits)) continue;
-    for (const benefit of feature.benefits) {
+    const benefits = getActiveFeatureBenefits(feature, {
+      activeStance: feature?.id ? featureStates.activeStances?.[feature.id] : null,
+      selectedChoice: feature?.id ? featureStates.activeSelections?.[feature.id] : null,
+    });
+
+    for (const benefit of benefits) {
       if (benefit.type === 'armor_proficiency' && benefit.level) {
         const grantedLevel = ARMOR_PROFICIENCY_LEVELS[benefit.level] || 0;
         proficiencyLevel = Math.max(proficiencyLevel, grantedLevel);
@@ -307,7 +345,7 @@ const isArmorProficient = (armor, character, features = []) => {
  * @param {Array} features - Character features (for bonus engine checks)
  * @returns {boolean} - True if proficient
  */
-const isShieldProficient = (character, features = []) => {
+const isShieldProficient = (character, features = [], featureStates = {}) => {
   if (!character) return false;
   
   // Get base shield proficiency from class
@@ -315,8 +353,12 @@ const isShieldProficient = (character, features = []) => {
   
   // Check for feature-granted shield proficiency
   for (const feature of features) {
-    if (!Array.isArray(feature.benefits)) continue;
-    for (const benefit of feature.benefits) {
+    const benefits = getActiveFeatureBenefits(feature, {
+      activeStance: feature?.id ? featureStates.activeStances?.[feature.id] : null,
+      selectedChoice: feature?.id ? featureStates.activeSelections?.[feature.id] : null,
+    });
+
+    for (const benefit of benefits) {
       if (benefit.type === 'shield_proficiency' && benefit.value === true) {
         isProficient = true;
         break;
@@ -391,6 +433,39 @@ const normalizeBenefitsInput = (benefits) => {
   return [];
 };
 
+const normalizeBenefitType = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[\s-]+/g, '_');
+
+const getSelectBenefit = (feature) => {
+  const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
+  return benefits.find((benefit) => normalizeBenefitType(benefit?.type) === 'select') || null;
+};
+
+const getFeatureSelectChoices = (feature) => {
+  const selectBenefit = getSelectBenefit(feature);
+  const selectConfig = selectBenefit?.select;
+  if (!selectConfig || typeof selectConfig !== 'object') return [];
+
+  const choices = Array.isArray(selectConfig.choices)
+    ? selectConfig.choices.filter((choice) => typeof choice === 'string' && choice.trim())
+    : [];
+
+  return choices.map((choice) => ({
+    name: choice,
+    benefits: normalizeBenefitsInput(selectConfig[choice]),
+  }));
+};
+
+const getSelectedFeatureBenefits = (feature, selectedChoice) => {
+  if (!selectedChoice) return [];
+
+  const selectChoices = getFeatureSelectChoices(feature);
+  const matchingChoice = selectChoices.find((choice) => choice.name === selectedChoice);
+  return matchingChoice?.benefits || [];
+};
+
 const evaluatePoolFormula = (formula, level, abilityModifiers = {}) => {
   if (!formula || typeof formula !== 'string') return 0;
 
@@ -455,7 +530,7 @@ const getFeaturePool = (feature, characterLevel, abilityModifiers) => {
 
 const isFeatureToggleIgnored = (target) => {
   if (!target || typeof target.closest !== 'function') return false;
-  return Boolean(target.closest('.uses-counter, .uses-boxes, .uses-btn, .use-box, .uses-reset, .pool-tracker, .pool-btn, .pool-input, .pool-reset'));
+  return Boolean(target.closest('.uses-counter, .uses-boxes, .uses-btn, .use-box, .uses-reset, .pool-tracker, .pool-btn, .pool-input, .pool-reset, .stance-selector, .stance-option, .feature-select, .feature-select-option'));
 };
 
 /**
@@ -497,6 +572,33 @@ const getStanceBenefits = (feature, activeStance) => {
   
   const stance = stanceBenefit.stances.find(s => s.name === activeStance);
   return stance?.benefits || [];
+};
+
+const getActiveFeatureBenefits = (feature, featureState = {}) => {
+  const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
+  const activeStanceBenefits = getStanceBenefits(feature, featureState.activeStance);
+  const selectedChoiceBenefits = getSelectedFeatureBenefits(feature, featureState.selectedChoice);
+
+  return [
+    ...benefits,
+    ...activeStanceBenefits,
+    ...selectedChoiceBenefits,
+  ];
+};
+
+const hasShieldIgnoreBenefit = (features = [], featureStates = {}) => {
+  return features.some((feature) => {
+    const featureId = feature?.id;
+    const activeBenefits = getActiveFeatureBenefits(feature, {
+      activeStance: featureId ? featureStates.activeStances?.[featureId] : null,
+      selectedChoice: featureId ? featureStates.activeSelections?.[featureId] : null,
+    });
+
+    return activeBenefits.some((benefit) => {
+      if (normalizeBenefitType(benefit?.type) !== 'ac_bonus') return false;
+      return benefit?.shield_ignore === true || benefit?.shieldIgnore === true;
+    });
+  });
 };
 
 function FeatureDescriptionBlock({ featureId, description, expanded, onToggle }) {
@@ -619,6 +721,10 @@ function CharacterSheet() {
   // Active stances for stance-type features (stored in localStorage)
   const [activeStances, setActiveStances] = useState({});
   const [activeStancesLoaded, setActiveStancesLoaded] = useState(false);
+
+  // Active selections for select-type features (stored in localStorage)
+  const [activeFeatureSelections, setActiveFeatureSelections] = useState({});
+  const [activeFeatureSelectionsLoaded, setActiveFeatureSelectionsLoaded] = useState(false);
 
   // Conditions localStorage management
   const conditionsStorageKey = character?.id
@@ -891,6 +997,46 @@ function CharacterSheet() {
     });
   };
 
+  // Active feature-select choices localStorage management
+  const featureSelectionsStorageKey = character?.id
+    ? `feature-selects:${character.id}`
+    : null;
+
+  useEffect(() => {
+    if (!featureSelectionsStorageKey) return;
+    try {
+      const stored = localStorage.getItem(featureSelectionsStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          setActiveFeatureSelections(parsed);
+          setActiveFeatureSelectionsLoaded(true);
+          return;
+        }
+      }
+      setActiveFeatureSelections({});
+    } catch {
+      setActiveFeatureSelections({});
+    }
+    setActiveFeatureSelectionsLoaded(true);
+  }, [featureSelectionsStorageKey]);
+
+  useEffect(() => {
+    if (!featureSelectionsStorageKey || !activeFeatureSelectionsLoaded) return;
+    try {
+      localStorage.setItem(featureSelectionsStorageKey, JSON.stringify(activeFeatureSelections));
+    } catch {
+      // Ignore storage write errors (private mode or quota exceeded)
+    }
+  }, [activeFeatureSelections, featureSelectionsStorageKey, activeFeatureSelectionsLoaded]);
+
+  const handleFeatureSelectionChange = (featureId, choiceName) => {
+    setActiveFeatureSelections((prev) => ({
+      ...prev,
+      [featureId]: choiceName,
+    }));
+  };
+
   const handleDescriptionToggle = (featureId) => {
     setExpandedDescriptions(prev => ({
       ...prev,
@@ -1075,30 +1221,42 @@ function CharacterSheet() {
   }, [character?.strength, character?.dexterity, character?.constitution, 
       character?.intelligence, character?.wisdom, character?.charisma]);
 
-  // Collect active stance benefits (must be before early returns)
-  const stanceBonuses = useMemo(() => {
-    if (!activeStancesLoaded || !character?.features) return [];
-    
-    const stances = character.features
-      .filter(f => f && f.benefits)
-      .map(f => {
-        const benefits = normalizeBenefitsInput(f.benefits ?? f.benefit);
-        const hasStance = benefits.some(b => b.type === 'stance');
-        return hasStance ? f : null;
-      })
-      .filter(Boolean);
-    
-    const allStanceBenefits = stances.flatMap(feature => {
-      const activeStance = activeStances[feature.id];
-      
-      if (!activeStance) return [];
-      
-      const stanceBenefits = getStanceBenefits(feature, activeStance);
-      if (!stanceBenefits.length) return [];
-      
-      const pseudoFeature = { ...feature, benefits: stanceBenefits };
-      
-      const collected = collectBonuses({
+  const normalizedFeatsForBonuses = (character?.feats || [])
+    .map((featEntry) => {
+      const joinedFeat = getJoinedFeat(featEntry);
+      if (!joinedFeat) {
+        console.warn('[CharacterSheet] Feat entry missing joined feat object:', featEntry);
+        return null;
+      }
+
+      return {
+        id: featEntry.id || joinedFeat.id || featEntry.feat_id,
+        name: joinedFeat.name || featEntry.name || 'Feat',
+        benefits: joinedFeat.benefits ?? featEntry.benefits ?? [],
+        source: featEntry.source || null
+      };
+    })
+    .filter(Boolean);
+
+  const featuresToProcess = [...(character?.features || []), ...normalizedFeatsForBonuses];
+
+  // Collect active conditional benefits (stances + select choices) before early returns.
+  const conditionalBonuses = useMemo(() => {
+    if (!activeStancesLoaded || !activeFeatureSelectionsLoaded || !featuresToProcess.length) return [];
+
+    return featuresToProcess.flatMap((feature) => {
+      const featureId = feature?.id;
+      const selectedChoice = featureId ? activeFeatureSelections[featureId] : null;
+      const activeStance = featureId ? activeStances[featureId] : null;
+      const conditionalBenefits = [
+        ...getStanceBenefits(feature, activeStance),
+        ...getSelectedFeatureBenefits(feature, selectedChoice)
+      ];
+
+      if (!conditionalBenefits.length) return [];
+
+      const pseudoFeature = { ...feature, benefits: conditionalBenefits };
+      return collectBonuses({
         items: [],
         features: [pseudoFeature],
         baseCharacterData: {
@@ -1110,11 +1268,8 @@ function CharacterSheet() {
         },
         overrides: []
       }) || [];
-      return collected;
     });
-
-    return allStanceBenefits;
-  }, [activeStances, activeStancesLoaded, character?.features, baseAbilities, proficiencyBonus]);
+  }, [activeFeatureSelections, activeFeatureSelectionsLoaded, activeStances, activeStancesLoaded, baseAbilities, character?.classes, character?.level, featuresToProcess, proficiencyBonus]);
 
   // Show loading screen only while character data is loading
   // Textures load in background via TexturePreloader at app root
@@ -1158,7 +1313,7 @@ function CharacterSheet() {
   const abilityScoreBonuses = convertAbilityScoresToBonuses(allAbilityImprovements);
 
   // Helper to calculate base AC from equipped armor
-  const calculateBaseAC = (inventory, dexModifier, character, features) => {
+  const calculateBaseAC = (inventory, dexModifier, character, features, featureStates = {}) => {
     if (!inventory || !Array.isArray(inventory)) {
       return 10 + dexModifier; // Unarmored
     }
@@ -1216,13 +1371,15 @@ function CharacterSheet() {
       }
     }
 
-    // Add shield bonus ONLY if proficient
-    if (equippedShield) {
+    const shieldIgnored = hasShieldIgnoreBenefit(features, featureStates);
+
+    // Add shield bonus ONLY if proficient and not ignored by an active feature choice.
+    if (equippedShield && !shieldIgnored) {
       const shieldData = getInventoryEquipmentData(equippedShield);
       const shieldAC = shieldData?.raw_data?.armor_class?.base || 0;
       
       // Check shield proficiency - only add AC if proficient
-      if (isShieldProficient(character, features)) {
+      if (isShieldProficient(character, features, featureStates)) {
         baseAC += shieldAC;
       }
     }
@@ -1231,7 +1388,7 @@ function CharacterSheet() {
   };
 
   // Shield bonus that AC override formulas can optionally include
-  const getEquippedShieldBonus = (inventory, character, features) => {
+  const getEquippedShieldBonus = (inventory, character, features, featureStates = {}) => {
     if (!Array.isArray(inventory)) return 0;
 
     const isShield = (item) => {
@@ -1243,7 +1400,8 @@ function CharacterSheet() {
 
     const equippedShield = inventory.find(item => item.equipped && isShield(item));
     if (!equippedShield) return 0;
-    if (!isShieldProficient(character, features)) return 0;
+    if (hasShieldIgnoreBenefit(features, featureStates)) return 0;
+    if (!isShieldProficient(character, features, featureStates)) return 0;
 
     const shieldData = getInventoryEquipmentData(equippedShield);
     return Number(shieldData?.raw_data?.armor_class?.base) || 0;
@@ -1318,14 +1476,21 @@ function CharacterSheet() {
     if (equippedShield) {
       const shieldData = getInventoryEquipmentData(equippedShield);
       const shieldAC = shieldData?.raw_data?.armor_class?.base;
-      const shieldProficient = isShieldProficient(character, features);
+      const shieldProficient = isShieldProficient(character, features, {
+        activeSelections: activeFeatureSelections,
+        activeStances,
+      });
+      const shieldIgnored = hasShieldIgnoreBenefit(features, {
+        activeSelections: activeFeatureSelections,
+        activeStances,
+      });
       
       if (shieldAC) {
         shieldBonus = {
           name: shieldData.name,
           bonus: shieldAC,
           proficient: shieldProficient,
-          appliedBonus: shieldProficient ? shieldAC : 0 // Only applied if proficient
+          appliedBonus: shieldProficient && !shieldIgnored ? shieldAC : 0
         };
       }
     }
@@ -1339,44 +1504,36 @@ function CharacterSheet() {
     };
   };
 
-  // Extract attuned magic items from inventory for bonus processing
-  const attunedMagicItems = (() => {
+  // Extract active magic items from inventory for bonus processing.
+  // Items that do not require attunement are always active.
+  const activeMagicItems = (() => {
     if (!Array.isArray(character.inventory)) return [];
     return character.inventory
-      .filter(invItem => invItem?.attuned && invItem?.magic_item)
+      .filter((invItem) => {
+        if (!invItem?.magic_item) return false;
+        if (isMagicItemHidden(invItem.magic_item)) return false;
+        if (!magicItemRequiresAttunement(invItem.magic_item)) return true;
+        return invItem.attuned === true;
+      })
       .map(invItem => invItem.magic_item);
   })();
 
+  const visibleCharacterItems = (character.items || []).filter((item) => !isMagicItemHidden(item));
+
   // Collect bonuses from items, features, and character overrides
   // (Skill bonuses are now handled directly in SkillsTab from feature.benefits)
-  const normalizedFeatsForBonuses = (character.feats || [])
-    .map((featEntry) => {
-      const joinedFeat = getJoinedFeat(featEntry);
-      if (!joinedFeat) {
-        console.warn('[CharacterSheet] Feat entry missing joined feat object:', featEntry);
-        return null;
-      }
-
-      return {
-        id: joinedFeat.id || featEntry.feat_id || featEntry.id,
-        name: joinedFeat.name || featEntry.name || 'Feat',
-        benefits: joinedFeat.benefits ?? featEntry.benefits ?? [],
-        source: featEntry.source || null
-      };
-    })
-    .filter(Boolean);
-
-  const featuresToProcess = [...(character.features || []), ...normalizedFeatsForBonuses];
-  
   const bonusList = collectBonuses({
-    items: [...(character.items || []), ...attunedMagicItems],
+    items: [...visibleCharacterItems, ...activeMagicItems],
     features: featuresToProcess,
     baseCharacterData: {
       ...baseAbilities,
       level: Math.max(1, Number(character?.level) || 1),
       classes: Array.isArray(character?.classes) ? character.classes : [],
       proficiency: proficiencyBonus,
-      shield_bonus: getEquippedShieldBonus(character.inventory, character, character.features || [])
+      shield_bonus: getEquippedShieldBonus(character.inventory, character, featuresToProcess, {
+        activeSelections: activeFeatureSelections,
+        activeStances,
+      })
     },
     overrides: character.bonuses || []
   }) || [];
@@ -1384,11 +1541,14 @@ function CharacterSheet() {
   // Combine all bonuses (from features + ASIs)
   const baseBonuses = [...bonusList, ...abilityScoreBonuses];
 
-  // Combine all bonuses (from features + ASIs + active stances)
-  const allBonuses = [...baseBonuses, ...stanceBonuses];
+  // Combine all bonuses (from features + ASIs + active conditional selections)
+  const allBonuses = [...baseBonuses, ...conditionalBonuses];
 
   // Calculate base AC from equipped armor (with proficiency checks)
-  const baseAC = calculateBaseAC(character.inventory, baseMods.dexterity, character, character.features || []);
+  const baseAC = calculateBaseAC(character.inventory, baseMods.dexterity, character, featuresToProcess, {
+    activeSelections: activeFeatureSelections,
+    activeStances,
+  });
 
   // Derive character stats using bonus engine
   const { derived: derivedStats, totals: statsTotals } = deriveCharacterStats({
@@ -1808,6 +1968,8 @@ function CharacterSheet() {
               onDescriptionToggle={handleDescriptionToggle}
               activeStances={activeStances}
               onStanceChange={handleStanceChange}
+              activeFeatureSelections={activeFeatureSelections}
+              onFeatureSelectionChange={handleFeatureSelectionChange}
             />
           </div>
           <div className="tab-pane">
@@ -2261,9 +2423,7 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
 
   // Determine if an item requires attunement
   const requiresAttunement = (item) => {
-    if (!item.magic_item) return false;
-    const attunement = item.magic_item.requires_attunement || item.magic_item.raw_data?.requires_attunement;
-    return attunement && attunement !== 'No' && attunement !== false;
+    return magicItemRequiresAttunement(item?.magic_item);
   };
 
   // Get rarity color class
@@ -2773,6 +2933,20 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
         raw_data: {}
       };
   const rawData = linkedEquipment?.raw_data || itemData?.raw_data || {};
+  const isHiddenMagicItem = isMagicItem && isMagicItemHidden(itemData);
+  const itemDescriptionText = (() => {
+    if (isHiddenMagicItem) return '???';
+
+    let text = isMagicItem
+      ? (itemData.description || rawData.description)
+      : rawData.description;
+
+    if (Array.isArray(text)) {
+      text = text.join('\n\n');
+    }
+
+    return text;
+  })();
   const isWeapon = isEquipmentLike && linkedEquipment.type?.toLowerCase().includes('weapon');
   const hasTrinketDescriptionChanges = isTrinket && (trinketDescription !== (item?.notes || ''));
 
@@ -2809,7 +2983,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
           <h2>{itemData?.name || 'Unknown Item'}</h2>
           
           {/* Description with optional image */}
-          {(rawData.description || itemData?.description) && (
+          {(isHiddenMagicItem || itemDescriptionText) && (
             <div className="item-section item-main-content">
               {/* Magic Item Image - floats left */}
               {isMagicItem && itemData?.image_url && (
@@ -2819,17 +2993,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
               )}
               
               <div className="item-description">
-                {(() => {
-                  // Magic items might have description at top level or in raw_data
-                  let text = isMagicItem 
-                    ? (itemData.description || rawData.description)
-                    : rawData.description;
-                  
-                  if (Array.isArray(text)) {
-                    text = text.join('\n\n');
-                  }
-                  return <ReactMarkdown>{text?.replace(/\n/g, '\n\n') || ''}</ReactMarkdown>;
-                })()}
+                <ReactMarkdown>{(itemDescriptionText || '').replace(/\n/g, '\n\n')}</ReactMarkdown>
               </div>
             </div>
           )}
@@ -2969,7 +3133,10 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
                   
                   if (isShieldItem) {
                     // Shield proficiency check
-                    const isProficient = isShieldProficient(character, character?.features || []);
+                    const isProficient = isShieldProficient(character, featuresToProcess, {
+                      activeSelections: activeFeatureSelections,
+                      activeStances,
+                    });
                     return (
                       <div className="item-row">
                         <span className="item-label">Proficiency:</span>
@@ -2980,7 +3147,10 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
                     );
                   } else {
                     // Armor proficiency check
-                    const isProficient = isArmorProficient(linkedEquipment, character, character?.features || []);
+                    const isProficient = isArmorProficient(linkedEquipment, character, featuresToProcess, {
+                      activeSelections: activeFeatureSelections,
+                      activeStances,
+                    });
                     return (
                       <div className="item-row">
                         <span className="item-label">Proficiency:</span>
@@ -3518,8 +3688,43 @@ function FeaturePoolTracker({ poolMax, featureId, poolName, storedValue, onPoolC
   );
 }
 
+function FeatureSelectControl({ feature, featureId, activeSelection, onSelectionChange }) {
+  if (!feature || !featureId) return null;
+
+  const choices = getFeatureSelectChoices(feature);
+  if (!choices.length) return null;
+
+  const handleChoiceClick = (event, choiceName) => {
+    event.stopPropagation();
+    const nextChoice = activeSelection === choiceName ? null : choiceName;
+    onSelectionChange(featureId, nextChoice);
+  };
+
+  return (
+    <div className="feature-select" onClick={(event) => event.stopPropagation()}>
+      <div className="feature-select-label">Choice:</div>
+      <div className="feature-select-options">
+        {choices.map((choice) => {
+          const isActive = activeSelection === choice.name;
+          return (
+            <button
+              key={choice.name}
+              type="button"
+              className={`feature-select-option ${isActive ? 'active' : ''}`}
+              onClick={(event) => handleChoiceClick(event, choice.name)}
+              aria-label={`${choice.name}${isActive ? ' (selected)' : ''}`}
+            >
+              {choice.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Stance Selector Component - renders stance options for stance-type features
-function StanceSelector({ feature, activeStance, onStanceChange }) {
+function StanceSelector({ feature, featureId, activeStance, onStanceChange }) {
   if (!feature) return null;
   
   const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
@@ -3533,7 +3738,7 @@ function StanceSelector({ feature, activeStance, onStanceChange }) {
     e.stopPropagation();
     // Toggle off if clicking the active stance, otherwise set new stance
     const newStance = activeStance === stanceName ? null : stanceName;
-    onStanceChange(feature.id, newStance);
+    onStanceChange(featureId, newStance);
   };
 
   return (
@@ -3573,7 +3778,9 @@ function FeaturesTab({
   onPoolChange,
   onDescriptionToggle,
   activeStances,
-  onStanceChange
+  onStanceChange,
+  activeFeatureSelections,
+  onFeatureSelectionChange
 }) {
   const [activeSubtab, setActiveSubtab] = useState('class');
 
@@ -3619,6 +3826,8 @@ function FeaturesTab({
             onDescriptionToggle={onDescriptionToggle}
             activeStances={activeStances}
             onStanceChange={onStanceChange}
+            activeFeatureSelections={activeFeatureSelections}
+            onFeatureSelectionChange={onFeatureSelectionChange}
           />
         )}
         {activeSubtab === 'species' && (
@@ -3634,6 +3843,8 @@ function FeaturesTab({
             onDescriptionToggle={onDescriptionToggle}
             activeStances={activeStances}
             onStanceChange={onStanceChange}
+            activeFeatureSelections={activeFeatureSelections}
+            onFeatureSelectionChange={onFeatureSelectionChange}
           />
         )}
         {activeSubtab === 'feats' && (
@@ -3649,6 +3860,8 @@ function FeaturesTab({
             onDescriptionToggle={onDescriptionToggle}
             activeStances={activeStances}
             onStanceChange={onStanceChange}
+            activeFeatureSelections={activeFeatureSelections}
+            onFeatureSelectionChange={onFeatureSelectionChange}
           />
         )}
       </div>
@@ -3657,7 +3870,7 @@ function FeaturesTab({
 }
 
 // Feature Subtab: Class Features
-function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange }) {
+function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (feature) => {
     return typeof feature.source === 'object' && feature.source?.source;
@@ -3751,8 +3964,15 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       onPoolChange={onPoolChange}
                     />
                   )}
+                  <FeatureSelectControl
+                    feature={feature}
+                    featureId={featureId}
+                    activeSelection={activeFeatureSelections?.[featureId]}
+                    onSelectionChange={onFeatureSelectionChange}
+                  />
                   <StanceSelector
                     feature={feature}
+                    featureId={featureId}
                     activeStance={activeStances?.[featureId]}
                     onStanceChange={onStanceChange}
                   />
@@ -3811,8 +4031,15 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       onPoolChange={onPoolChange}
                     />
                   )}
+                  <FeatureSelectControl
+                    feature={feature}
+                    featureId={featureId}
+                    activeSelection={activeFeatureSelections?.[featureId]}
+                    onSelectionChange={onFeatureSelectionChange}
+                  />
                   <StanceSelector
                     feature={feature}
+                    featureId={featureId}
                     activeStance={activeStances?.[featureId]}
                     onStanceChange={onStanceChange}
                   />
@@ -3871,8 +4098,15 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       onPoolChange={onPoolChange}
                     />
                   )}
+                  <FeatureSelectControl
+                    feature={feature}
+                    featureId={featureId}
+                    activeSelection={activeFeatureSelections?.[featureId]}
+                    onSelectionChange={onFeatureSelectionChange}
+                  />
                   <StanceSelector
                     feature={feature}
+                    featureId={featureId}
                     activeStance={activeStances?.[featureId]}
                     onStanceChange={onStanceChange}
                   />
@@ -3931,8 +4165,15 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       onPoolChange={onPoolChange}
                     />
                   )}
+                  <FeatureSelectControl
+                    feature={feature}
+                    featureId={featureId}
+                    activeSelection={activeFeatureSelections?.[featureId]}
+                    onSelectionChange={onFeatureSelectionChange}
+                  />
                   <StanceSelector
                     feature={feature}
+                    featureId={featureId}
                     activeStance={activeStances?.[featureId]}
                     onStanceChange={onStanceChange}
                   />
@@ -3955,7 +4196,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
 }
 
 // Feature Subtab: Species Features
-function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange }) {
+function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (feature) => {
     return typeof feature.source === 'object' && feature.source?.source;
@@ -4056,8 +4297,15 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
                 onPoolChange={onPoolChange}
               />
             )}
+            <FeatureSelectControl
+              feature={feature}
+              featureId={featureId}
+              activeSelection={activeFeatureSelections?.[featureId]}
+              onSelectionChange={onFeatureSelectionChange}
+            />
             <StanceSelector
               feature={feature}
+              featureId={featureId}
               activeStance={activeStances?.[featureId]}
               onStanceChange={onStanceChange}
             />
@@ -4078,7 +4326,7 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
 }
 
 // Feature Subtab: Feats (includes background features)
-function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange }) {
+function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (item) => {
     return typeof item.source === 'object' && item.source?.source;
@@ -4138,8 +4386,15 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
                 onPoolChange={onPoolChange}
               />
             )}
+            <FeatureSelectControl
+              feature={feature}
+              featureId={featureId}
+              activeSelection={activeFeatureSelections?.[featureId]}
+              onSelectionChange={onFeatureSelectionChange}
+            />
             <StanceSelector
               feature={feature}
+              featureId={featureId}
               activeStance={activeStances?.[featureId]}
               onStanceChange={onStanceChange}
             />
@@ -4201,8 +4456,15 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
                   onPoolChange={onPoolChange}
                 />
               )}
+              <FeatureSelectControl
+                feature={feat}
+                featureId={featId}
+                activeSelection={activeFeatureSelections?.[featId]}
+                onSelectionChange={onFeatureSelectionChange}
+              />
               <StanceSelector
                 feature={feat}
+                featureId={featId}
                 activeStance={activeStances?.[featId]}
                 onStanceChange={onStanceChange}
               />

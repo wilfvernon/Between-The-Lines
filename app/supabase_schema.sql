@@ -51,7 +51,9 @@ CREATE TABLE magic_items (
   type VARCHAR(50),
   rarity VARCHAR(50),
   requires_attunement VARCHAR(255) DEFAULT false,
+  hidden BOOLEAN NOT NULL DEFAULT false,
   description TEXT NOT NULL,
+  benefits JSONB,
   properties JSONB,
   image_url TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
