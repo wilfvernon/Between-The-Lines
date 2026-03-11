@@ -182,7 +182,8 @@ const renderEntries = (entries) => {
 
   return entries.map((entry, index) => (
     <div className="creature-entry" key={`${entry?.name || 'entry'}-${index}`}>
-      <strong>{renderAccentText(entry?.name || 'Feature')}.</strong> {renderAccentText(entry?.text || '')}
+      <span className="creature-entry-name">{String(entry?.name || 'Feature')}.</span>{' '}
+      <span className="creature-entry-text">{renderAccentText(entry?.text || '')}</span>
     </div>
   ));
 };
@@ -368,6 +369,16 @@ export default function CreaturesTab({ character, proficiencyBonus = 0, derivedM
 
     try {
       const baseSummon = row.summon || lookupSummons[row.summonId] || null;
+      if (!row?.summonId) {
+        setSelectedSummon({
+          name: row.sourceName || 'Unknown Creature',
+          _sourceName: row.sourceName,
+          _sourceType: row.sourceType,
+          _loadError: 'Missing summon id on this entry.'
+        });
+        return;
+      }
+
       const { data, error } = await supabase
         .from('monster_statblocks')
         .select('*')
@@ -376,7 +387,16 @@ export default function CreaturesTab({ character, proficiencyBonus = 0, derivedM
 
       if (error) {
         console.warn('Failed to load creature stat block:', error.message);
-        setSelectedSummon(baseSummon ? { ...baseSummon, _sourceName: row.sourceName, _sourceType: row.sourceType } : null);
+        setSelectedSummon(
+          baseSummon
+            ? { ...baseSummon, _sourceName: row.sourceName, _sourceType: row.sourceType, _loadError: error.message }
+            : {
+                name: row.sourceName || 'Unknown Creature',
+                _sourceName: row.sourceName,
+                _sourceType: row.sourceType,
+                _loadError: error.message
+              }
+        );
       } else {
         setSelectedSummon({ ...(baseSummon || {}), ...(data || {}), _sourceName: row.sourceName, _sourceType: row.sourceType });
       }
@@ -431,7 +451,7 @@ export default function CreaturesTab({ character, proficiencyBonus = 0, derivedM
         <p className="info-text">No creature summons found from spells or magic items.</p>
       ) : (
         <div className="feature-subtab-content">
-          <div className="actions-container">
+          <div className="creatures-container">
             {creatureRows.map((row) => {
               const summon = row.summon || lookupSummons[row.summonId] || null;
                const computedRowSummon = interpolateFormulas(summon, extendedFormulaVariables);
@@ -485,12 +505,17 @@ export default function CreaturesTab({ character, proficiencyBonus = 0, derivedM
               <>
                 <header className="creature-modal-header">
                   <h3 className="creature-modal-title">{computedSummon?.name || 'Unknown Creature'}</h3>
-                  <p className="creature-modal-subtitle">
-                    {computedSummon?.size || ''} {computedSummon?.creature_type || ''}{computedSummon?.alignment ? `, ${computedSummon.alignment}` : ''}
-                  </p>
-                  <p className="creature-modal-source">
-                    {computedSummon?._sourceName || 'Unknown'}
-                  </p>
+                  <div className="creature-modal-meta">
+                    <p className="creature-modal-subtitle">
+                      {computedSummon?.size || ''} {computedSummon?.creature_type || ''}{computedSummon?.alignment ? `, ${computedSummon.alignment}` : ''}
+                    </p>
+                    <p className="creature-modal-source">
+                      {computedSummon?._sourceName || 'Unknown'}
+                    </p>
+                  </div>
+                  {computedSummon?._loadError && (
+                    <p className="creature-modal-warning">{computedSummon._loadError}</p>
+                  )}
                 </header>
 
                 <div className="creature-statblock">

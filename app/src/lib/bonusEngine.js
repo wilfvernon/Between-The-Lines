@@ -512,6 +512,7 @@ const benefitHandlers = {
     if (benefit.bonus === undefined || benefit.bonus === null) return [];
     
     let value = 0;
+    let initiativeAbility = null;
     
     if (typeof benefit.bonus === 'number') {
       // Flat value
@@ -522,7 +523,8 @@ const benefitHandlers = {
       if (bonusKey === 'proficiency' || bonusKey === 'proficiency_bonus') {
         value = baseCharacterData.proficiency || 2;
       } else if (['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'].includes(bonusKey)) {
-        // It's an ability name, get its modifier
+        // Mark as ability-linked so final value can use derived modifiers.
+        initiativeAbility = bonusKey;
         const abilityScore = baseCharacterData[bonusKey] || 10;
         value = abilityModifier(abilityScore);
       } else {
@@ -536,6 +538,7 @@ const benefitHandlers = {
     return [{
       target: 'initiative',
       value,
+      initiativeAbility,
       type: 'untyped',
       source
     }];
@@ -553,6 +556,7 @@ const benefitHandlers = {
     if (benefit.amount === undefined || benefit.amount === null) return [];
     
     let value = 0;
+    let initiativeAbility = null;
     
     if (typeof benefit.amount === 'number') {
       // Flat value
@@ -563,7 +567,8 @@ const benefitHandlers = {
       if (amountKey === 'proficiency' || amountKey === 'proficiency_bonus') {
         value = baseCharacterData.proficiency || 2;
       } else if (['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'].includes(amountKey)) {
-        // It's an ability name, get its modifier
+        // Mark as ability-linked so final value can use derived modifiers.
+        initiativeAbility = amountKey;
         const abilityScore = baseCharacterData[amountKey] || 10;
         value = abilityModifier(abilityScore);
       } else {
@@ -577,6 +582,7 @@ const benefitHandlers = {
     return [{
       target: 'initiative',
       value,
+      initiativeAbility,
       type: 'untyped',
       source
     }];
@@ -948,6 +954,15 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     return { ...acc, [key]: abilityModifier(derivedAbilities[key]) };
   }, {});
 
+  // Resolve initiative bonuses after derived modifiers are known.
+  const resolvedInitiativeBonus = sources.initiative.reduce((sum, bonus) => {
+    if (bonus?.initiativeAbility && derivedModifiers[bonus.initiativeAbility] !== undefined) {
+      return sum + (derivedModifiers[bonus.initiativeAbility] || 0);
+    }
+    return sum + (bonus?.value || 0);
+  }, 0);
+  totals.initiative = resolvedInitiativeBonus;
+
   const baseAC = (base?.acBase ?? 0) + totals.ac;
   let finalAC = baseAC;
 
@@ -970,7 +985,7 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     proficiency: base?.proficiency ?? 0,
     ac: finalAC,
     // Initiative = derived dexterity modifier + initiative bonuses from features
-    initiative: (derivedModifiers.dexterity || 0) + (totals.initiative || 0),
+    initiative: (derivedModifiers.dexterity || 0) + resolvedInitiativeBonus,
     passivePerception: (base?.passivePerceptionBase ?? 0) + totals.passivePerception,
     advantages: totals.advantages
   };
