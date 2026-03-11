@@ -3579,7 +3579,10 @@ Last Updated: 2026-03-04
 
 .hp-modal {
   position: relative;
-  --hp-content-inset: 30% 20% 34% 20%;
+  --hp-top-inset: clamp(22%, 30% - 0.05vh, 30%);
+  --hp-bottom-inset: clamp(28%, 34% - 0.02vh, 34%);
+  --hp-side-inset: clamp(15%, 20% - 0.3vw, 20%);
+  --hp-content-inset: var(--hp-top-inset) var(--hp-side-inset) var(--hp-bottom-inset) var(--hp-side-inset);
   animation: journal-open 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   overflow: hidden;
   display: flex;
@@ -3637,7 +3640,7 @@ Last Updated: 2026-03-04
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: clamp(6px, 1.5vw, 16px);
   overflow: hidden;
 }
 
@@ -3680,7 +3683,7 @@ Last Updated: 2026-03-04
 
 .hp-fields-row {
   display: flex;
-  gap: 16px;
+  gap: clamp(6px, 1.8vw, 16px);
   align-items: flex-end;
   flex-wrap: nowrap;
 }
@@ -3691,12 +3694,12 @@ Last Updated: 2026-03-04
 }
 
 .hp-field-compact label {
-  font-size: 0.95rem;
+  font-size: clamp(0.7rem, 0.65rem + 0.8vw, 0.95rem);
 }
 
 .hp-field-compact input {
-  padding: 6px 8px;
-  font-size: 1.1rem;
+  padding: clamp(3px, 0.5vw, 6px) clamp(5px, 0.8vw, 8px);
+  font-size: clamp(0.85rem, 0.8rem + 0.9vw, 1.1rem);
 }
 
 .hp-field {
@@ -3708,9 +3711,9 @@ Last Updated: 2026-03-04
 .hp-field label {
   font-weight: 600;
   color: #3d2817;
-  font-size: 1.1rem;
+  font-size: clamp(0.8rem, 0.75rem + 0.9vw, 1.1rem);
   font-family: 'Goudy Bookletter 1911', 'Georgia', serif;
-  letter-spacing: 0.3px;
+  letter-spacing: clamp(0.1px, 0.15vw, 0.3px);
 }
 
 .hp-field input {
@@ -3719,7 +3722,7 @@ Last Updated: 2026-03-04
   border: none;
   border-bottom: 2px solid #8b5a2b;
   color: #2c1810;
-  font-size: 1.5rem;
+  font-size: clamp(1.15rem, 1.1rem + 1vw, 1.5rem);
   font-family: 'Blackout', 'Georgia', serif;
   font-weight: 500;
   transition: all 0.2s;
@@ -3750,16 +3753,16 @@ Last Updated: 2026-03-04
   font-family: 'Goudy Bookletter 1911', 'Georgia', serif;
   font-weight: 600;
   color: #3d2817;
-  font-size: 0.65em;
+  font-size: clamp(0.5rem, 0.45rem + 0.6vw, 0.65rem);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: clamp(0.03em, 0.08vw, 0.06em);
 }
 
 .hp-total-values {
   display: inline-flex;
   align-items: baseline;
   justify-content: center;
-  gap: 6px;
+  gap: clamp(3px, 0.8vw, 6px);
 }
 
 .hp-modal-toolbar {
@@ -3792,7 +3795,7 @@ Last Updated: 2026-03-04
 
 .hp-total-value {
   font-family: 'Blackout', 'Georgia', serif;
-  font-size: 2.4rem;
+  font-size: clamp(1.6rem, 1.2rem + 2vw, 2.4rem);
 }
 
 .hp-total-separator {
@@ -3834,15 +3837,15 @@ Last Updated: 2026-03-04
 .hp-calculator {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 6px;
+  gap: clamp(3px, 1vw, 8px);
+  padding-top: clamp(2px, 0.8vh, 6px);
   border-top: 1px solid rgba(139, 90, 43, 0.5);
   align-items: center;
 }
 
 .hp-calculator-inputs {
   display: flex;
-  gap: 12px;
+  gap: clamp(6px, 1.5vw, 12px);
   align-items: center;
   justify-content: center;
   width: fit-content;
@@ -3850,16 +3853,16 @@ Last Updated: 2026-03-04
 }
 
 .hp-calculator-inputs input {
-  flex: 0 0 70px;
-  padding: 8px 10px;
+  flex: 0 0 clamp(50px, 12vw, 70px);
+  padding: clamp(5px, 0.8vh, 8px) clamp(6px, 1vw, 10px);
   background: transparent;
   border: none;
   border-bottom: 2px solid #8b5a2b;
   color: #2c1810;
-  font-size: 2rem;
+  font-size: clamp(1rem, 0.9rem + 1.2vw, 2rem);
   font-family: 'Blackout', 'Georgia', serif;
   font-weight: 500;
-  width: 10%;
+  width: clamp(8%, 12vw, 10%);
   transition: all 0.2s;
   outline: none;
   text-align: center;
@@ -3926,10 +3929,36 @@ Last Updated: 2026-03-04
 }
 
 .hp-action-icon {
-  width: 5.3rem;
-  height: 5.3rem;
+  width: clamp(2rem, 1.8rem + 2vw, 5.3rem);
+  height: clamp(2rem, 1.8rem + 2vw, 5.3rem);
   display: block;
 }
+
+@media (max-height: 400px) {
+  .hp-modal {
+    --hp-top-inset: 16%;
+    --hp-bottom-inset: 14%;
+    --hp-side-inset: 12%;
+  }
+
+  .hp-modal-content {
+    gap: clamp(4px, 1vw, 10px);
+  }
+
+  .hp-total-value {
+    font-size: clamp(1.2rem, 1rem + 1.5vw, 1.8rem);
+  }
+
+  .hp-calculator-inputs input {
+    font-size: clamp(0.9rem, 0.75rem + 1vw, 1.4rem);
+  }
+
+  .hp-action-icon {
+    width: clamp(1.8rem, 1.6rem + 1.5vw, 2.8rem);
+    height: clamp(1.8rem, 1.6rem + 1.5vw, 2.8rem);
+  }
+}
+
 
 /* Inventory Tab */
 .inventory-tab h2 {

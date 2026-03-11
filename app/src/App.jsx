@@ -7,6 +7,8 @@ import AssetLoader from './components/AssetLoader';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import CharacterSheet from './pages/CharacterSheet';
+import VisualCreaturesTest from './pages/VisualCreaturesTest';
+import VisualHpModalTest from './pages/VisualHpModalTest';
 import Bookshelf from './pages/Bookshelf';
 import GalateaFineArt from './pages/GalateaFineArt';
 import Notes from './pages/Notes';
@@ -56,6 +58,8 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/__visual/creatures" element={<VisualCreaturesTest />} />
+          <Route path="/__visual/hp-modal" element={<VisualHpModalTest />} />
           <Route
             path="/"
             element={

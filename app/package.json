@@ -14,6 +14,11 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "test:e2e:visual": "playwright test e2e/visual-character-sheet.spec.js",
+    "test:e2e:visual:update": "playwright test e2e/visual-character-sheet.spec.js --update-snapshots",
+    "test:e2e:visual:hp": "playwright test e2e/visual-hp-modal-responsive.spec.js",
+    "test:e2e:visual:hp:update": "playwright test e2e/visual-hp-modal-responsive.spec.js --update-snapshots",
+    "test:e2e:report": "playwright show-report",
     "test:transform": "node src/lib/testTransform.js",
     "insert:corinn": "node src/lib/insertCharacter.js"
   },
