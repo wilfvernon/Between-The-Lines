@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import SpellDetailModal from '../../../components/SpellDetailModal';
 import SpellRow from '../components/SpellRow';
 import { renderSpellDescription } from '../../../lib/spellUtils.jsx';
@@ -26,6 +26,10 @@ function normalizeBenefitType(value) {
     .replace(/[\s-]+/g, '_');
 }
 
+function isSneakAttackFeatureName(name) {
+  return String(name || '').toLowerCase().trim() === 'sneak attack';
+}
+
 // Helper to evaluate pool formulas like "level+wisdom" or "5*level"
 function evaluatePoolFormula(formula, level, abilityModifiers) {
   if (!formula || typeof formula !== 'string') return 0;
@@ -45,6 +49,14 @@ function evaluatePoolFormula(formula, level, abilityModifiers) {
   // Replace "level" with the actual level value
   normalizedFormula = normalizedFormula.replace(/\blevel\b/gi, level.toString());
   
+  // Support rounding suffixes like "level/2ru" or "level/2rd"
+  let roundingMode = null;
+  const roundingMatch = normalizedFormula.match(/^(.*?)(ru|rd)\s*$/i);
+  if (roundingMatch) {
+    normalizedFormula = roundingMatch[1].trim();
+    roundingMode = roundingMatch[2].toLowerCase();
+  }
+
   // Safely evaluate the mathematical expression
   try {
     // Only allow numbers, operators, and parentheses for safety
@@ -57,13 +69,154 @@ function evaluatePoolFormula(formula, level, abilityModifiers) {
     const result = Function(`"use strict"; return (${normalizedFormula})`)();
     
     if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
-      return Math.max(0, Math.floor(result)); // Ensure non-negative integer
+      const rounded = roundingMode === 'ru'
+        ? Math.ceil(result)
+        : roundingMode === 'rd'
+          ? Math.floor(result)
+          : Math.floor(result);
+      return Math.max(0, rounded); // Ensure non-negative integer
     }
   } catch (error) {
     console.warn(`[Pool Formula] Failed to evaluate formula: ${formula}`, error);
   }
   
   return 0;
+}
+
+function resolveFeatureTextTemplate(templateText, feature, character, proficiencyBonus = 0, derivedMods = null, preferredBenefitType = null) {
+  const text = typeof templateText === 'string' ? templateText : '';
+  if (!text) return '';
+
+  let result = text;
+
+  // Handle ${proficiency} - proficiency bonus
+  if (result.includes('${proficiency}')) {
+    result = result.replaceAll('${proficiency}', String(proficiencyBonus));
+  }
+
+  // Handle ${level} - character level
+  if (result.includes('${level}')) {
+    const level = getCharacterLevel(character);
+    result = result.replaceAll('${level}', String(level));
+  }
+
+  // Handle ability interpolations via derived modifiers from CharacterSheet.
+  const modifierMap = {
+    strength: Number.isFinite(derivedMods?.strength)
+      ? derivedMods.strength
+      : Math.floor(((character?.strength ?? 10) - 10) / 2),
+    dexterity: Number.isFinite(derivedMods?.dexterity)
+      ? derivedMods.dexterity
+      : Math.floor(((character?.dexterity ?? 10) - 10) / 2),
+    constitution: Number.isFinite(derivedMods?.constitution)
+      ? derivedMods.constitution
+      : Math.floor(((character?.constitution ?? 10) - 10) / 2),
+    intelligence: Number.isFinite(derivedMods?.intelligence)
+      ? derivedMods.intelligence
+      : Math.floor(((character?.intelligence ?? 10) - 10) / 2),
+    wisdom: Number.isFinite(derivedMods?.wisdom)
+      ? derivedMods.wisdom
+      : Math.floor(((character?.wisdom ?? 10) - 10) / 2),
+    charisma: Number.isFinite(derivedMods?.charisma)
+      ? derivedMods.charisma
+      : Math.floor(((character?.charisma ?? 10) - 10) / 2)
+  };
+
+  Object.entries(modifierMap).forEach(([ability, modifier]) => {
+    const scoreTag = `\${${ability}}`;
+    const modTag = `\${${ability}_mod}`;
+
+    if (result.includes(scoreTag)) {
+      // `${ability}` resolves to the ability modifier (per sheet conventions).
+      result = result.replaceAll(scoreTag, String(modifier));
+    }
+
+    if (result.includes(modTag)) {
+      result = result.replaceAll(modTag, String(modifier >= 0 ? `+${modifier}` : modifier));
+    }
+  });
+
+  const benefits = normalizeBenefits(feature?.benefits);
+  const normalizedPreferredType = preferredBenefitType ? normalizeBenefitType(preferredBenefitType) : null;
+
+  const pickBenefitWithField = (fieldName) => {
+    const hasField = (benefit) => {
+      const fieldValue = benefit?.[fieldName];
+      return typeof fieldValue === 'string' ? fieldValue.trim().length > 0 : fieldValue !== null && fieldValue !== undefined;
+    };
+
+    if (normalizedPreferredType) {
+      const typed = benefits.find((b) => hasField(b) && normalizeBenefitType(b?.type) === normalizedPreferredType);
+      if (typed) return typed;
+
+      const untyped = benefits.find((b) => hasField(b) && !b?.type);
+      if (untyped) return untyped;
+    }
+
+    return benefits.find((b) => hasField(b));
+  };
+
+  // Handle ${pb_multiplier} - multiply proficiency bonus by pb_multiplier value
+  if (result.includes('${pb_multiplier}')) {
+    const benefitWithMultiplier = benefits.find((b) => typeof b?.pb_multiplier === 'number');
+
+    if (benefitWithMultiplier) {
+      const multipliedValue = proficiencyBonus * benefitWithMultiplier.pb_multiplier;
+      result = result.replaceAll('${pb_multiplier}', String(multipliedValue));
+    } else {
+      result = result.replaceAll('${pb_multiplier}', String(proficiencyBonus));
+    }
+  }
+
+  // Handle ${level_scaling} and ${scaling} - replace with resolved die
+  if (result.includes('${scaling}') || result.includes('${level_scaling}')) {
+    const scalingLevel = getScalingLevel(feature, character);
+    const scalingValue = resolveFeatureScaling(feature, scalingLevel);
+    result = result.replaceAll('${scaling}', scalingValue || '');
+    result = result.replaceAll('${level_scaling}', scalingValue || '');
+  }
+
+  // Handle ${formula}
+  if (result.includes('${formula}')) {
+    const formulaSource = pickBenefitWithField('formula');
+    if (formulaSource?.formula) {
+      const level = getCharacterLevel(character);
+      const formulaValue = evaluatePoolFormula(formulaSource.formula, level, modifierMap);
+      result = result.replaceAll('${formula}', String(formulaValue));
+    } else {
+      result = result.replaceAll('${formula}', '0');
+    }
+  }
+
+  // Handle ${die}
+  if (result.includes('${die}')) {
+    const dieSource = pickBenefitWithField('die');
+    result = result.replaceAll('${die}', typeof dieSource?.die === 'string' ? dieSource.die : '');
+  }
+
+  // Handle ${value}
+  if (result.includes('${value}')) {
+    const valueSource = pickBenefitWithField('value') || pickBenefitWithField('formula');
+    let resolvedValue = '0';
+
+    if (valueSource) {
+      if (typeof valueSource.value === 'number') {
+        resolvedValue = String(valueSource.value);
+      } else if (typeof valueSource.value === 'string' && valueSource.value.trim().toLowerCase() === 'formula' && valueSource.formula) {
+        const level = getCharacterLevel(character);
+        resolvedValue = String(evaluatePoolFormula(valueSource.formula, level, modifierMap));
+      } else if (typeof valueSource.value === 'string' && valueSource.value.trim()) {
+        resolvedValue = valueSource.value;
+      } else if (typeof valueSource.formula === 'string' && valueSource.formula.trim()) {
+        const level = getCharacterLevel(character);
+        resolvedValue = String(evaluatePoolFormula(valueSource.formula, level, modifierMap));
+      }
+    }
+
+    result = result.replaceAll('${value}', resolvedValue);
+  }
+
+  return result;
 }
 
 function hasBenefitType(feature, targetType) {
@@ -253,97 +406,89 @@ function resolveFeatureScaling(feature, scalingLevel) {
   return resolved;
 }
 
-function resolveFeatureShortText(feature, character, proficiencyBonus = 0, derivedMods = null) {
-  const shortText = typeof feature?.short === 'string' ? feature.short : '';
-  if (!shortText) return '';
+function resolveFeatureShortText(feature, character, proficiencyBonus = 0, derivedMods = null, preferredBenefitType = null) {
+  return resolveFeatureTextTemplate(feature?.short, feature, character, proficiencyBonus, derivedMods, preferredBenefitType);
+}
 
-  let result = shortText;
-  // Handle ${proficiency} - proficiency bonus
-  if (result.includes('${proficiency}')) {
-    result = result.replaceAll('${proficiency}', String(proficiencyBonus));
-  }
+function resolveFeatureBenefitDescription(feature, character, proficiencyBonus = 0, derivedMods = null, preferredBenefitType = null) {
+  const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+  const normalizedPreferredType = preferredBenefitType ? normalizeBenefitType(preferredBenefitType) : null;
 
-  // Handle ${level} - character level
-  if (result.includes('${level}')) {
-    const level = getCharacterLevel(character);
-    result = result.replaceAll('${level}', String(level));
-  }
-
-  // Handle ability interpolations via derived modifiers from CharacterSheet.
-  const modifierMap = {
-    strength: Number.isFinite(derivedMods?.strength)
-      ? derivedMods.strength
-      : Math.floor(((character?.strength ?? 10) - 10) / 2),
-    dexterity: Number.isFinite(derivedMods?.dexterity)
-      ? derivedMods.dexterity
-      : Math.floor(((character?.dexterity ?? 10) - 10) / 2),
-    constitution: Number.isFinite(derivedMods?.constitution)
-      ? derivedMods.constitution
-      : Math.floor(((character?.constitution ?? 10) - 10) / 2),
-    intelligence: Number.isFinite(derivedMods?.intelligence)
-      ? derivedMods.intelligence
-      : Math.floor(((character?.intelligence ?? 10) - 10) / 2),
-    wisdom: Number.isFinite(derivedMods?.wisdom)
-      ? derivedMods.wisdom
-      : Math.floor(((character?.wisdom ?? 10) - 10) / 2),
-    charisma: Number.isFinite(derivedMods?.charisma)
-      ? derivedMods.charisma
-      : Math.floor(((character?.charisma ?? 10) - 10) / 2)
+  const hasDescription = (benefit) => {
+    const description = benefit?.description ?? benefit?.effect;
+    return typeof description === 'string' && description.trim().length > 0;
   };
 
-  Object.entries(modifierMap).forEach(([ability, modifier]) => {
-    const scoreTag = `\${${ability}}`;
-    const modTag = `\${${ability}_mod}`;
+  let selectedBenefit = null;
 
-    if (result.includes(scoreTag)) {
-      // `${ability}` resolves to the ability modifier (per sheet conventions).
-      result = result.replaceAll(scoreTag, String(modifier));
-    }
+  if (normalizedPreferredType) {
+    selectedBenefit = benefits.find((benefit) => normalizeBenefitType(benefit?.type) === normalizedPreferredType && hasDescription(benefit));
+  }
 
-    if (result.includes(modTag)) {
-      result = result.replaceAll(modTag, String(modifier >= 0 ? `+${modifier}` : modifier));
-    }
-  });
+  if (!selectedBenefit) {
+    selectedBenefit = benefits.find((benefit) => !benefit?.type && hasDescription(benefit));
+  }
 
-  // Handle ${pb_multiplier} - multiply proficiency bonus by pb_multiplier value
-  if (result.includes('${pb_multiplier}')) {
-    const benefits = normalizeBenefits(feature?.benefits);
-    // Find any benefit with pb_multiplier (bonus_action or other types)
-    const benefitWithMultiplier = benefits.find((b) => typeof b?.pb_multiplier === 'number');
+  if (!selectedBenefit) {
+    selectedBenefit = benefits.find((benefit) => hasDescription(benefit));
+  }
 
-    if (benefitWithMultiplier) {
-      const multipliedValue = proficiencyBonus * benefitWithMultiplier.pb_multiplier;
-      result = result.replaceAll('${pb_multiplier}', String(multipliedValue));
+  const template = selectedBenefit?.description ?? selectedBenefit?.effect ?? feature?.description ?? '';
+  return resolveFeatureTextTemplate(template, feature, character, proficiencyBonus, derivedMods, preferredBenefitType);
+}
+
+function resolveSneakDamageDisplay(feature, character, derivedMods = null, dieOverride = null) {
+  const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+  const modifierMap = {
+    strength: Number.isFinite(derivedMods?.strength) ? derivedMods.strength : Math.floor(((character?.strength ?? 10) - 10) / 2),
+    dexterity: Number.isFinite(derivedMods?.dexterity) ? derivedMods.dexterity : Math.floor(((character?.dexterity ?? 10) - 10) / 2),
+    constitution: Number.isFinite(derivedMods?.constitution) ? derivedMods.constitution : Math.floor(((character?.constitution ?? 10) - 10) / 2),
+    intelligence: Number.isFinite(derivedMods?.intelligence) ? derivedMods.intelligence : Math.floor(((character?.intelligence ?? 10) - 10) / 2),
+    wisdom: Number.isFinite(derivedMods?.wisdom) ? derivedMods.wisdom : Math.floor(((character?.wisdom ?? 10) - 10) / 2),
+    charisma: Number.isFinite(derivedMods?.charisma) ? derivedMods.charisma : Math.floor(((character?.charisma ?? 10) - 10) / 2)
+  };
+
+  const hasDamageParts = (benefit) => {
+    const die = typeof benefit?.die === 'string' ? benefit.die.trim() : '';
+    const hasFormula = typeof benefit?.formula === 'string' && benefit.formula.trim();
+    const hasValue = benefit?.value !== null && benefit?.value !== undefined && String(benefit.value).trim() !== '';
+    return Boolean(die || hasFormula || hasValue);
+  };
+
+  const typed = benefits.find((benefit) => normalizeBenefitType(benefit?.type) === 'sneak' && hasDamageParts(benefit));
+  const untyped = benefits.find((benefit) => !benefit?.type && hasDamageParts(benefit));
+  const fallback = benefits.find((benefit) => hasDamageParts(benefit));
+  const source = typed || untyped || fallback;
+  if (!source) return '';
+
+  const diePart = typeof source.die === 'string' ? source.die.trim() : '';
+  const level = getCharacterLevel(character);
+  let countValue = null;
+
+  if (typeof source.formula === 'string' && source.formula.trim()) {
+    countValue = evaluatePoolFormula(source.formula, level, modifierMap);
+  } else if (typeof source.value === 'number') {
+    countValue = Math.max(0, Math.floor(source.value));
+  } else if (typeof source.value === 'string' && source.value.trim()) {
+    const normalizedValue = source.value.trim().toLowerCase();
+    if (normalizedValue === 'formula' && typeof source.formula === 'string' && source.formula.trim()) {
+      countValue = evaluatePoolFormula(source.formula, level, modifierMap);
     } else {
-      // Fallback: just use proficiency bonus if no multiplier found
-      result = result.replaceAll('${pb_multiplier}', String(proficiencyBonus));
+      const numericValue = Number.parseInt(source.value, 10);
+      if (Number.isFinite(numericValue)) {
+        countValue = Math.max(0, numericValue);
+      } else {
+        countValue = evaluatePoolFormula(source.value, level, modifierMap);
+      }
     }
   }
 
-  // Handle ${level_scaling} and ${scaling} - replace with resolved die
-  if (result.includes('${scaling}') || result.includes('${level_scaling}')) {
-    const scalingLevel = getScalingLevel(feature, character);
-    const scalingValue = resolveFeatureScaling(feature, scalingLevel);
-    result = result.replaceAll('${scaling}', scalingValue || '');
-    result = result.replaceAll('${level_scaling}', scalingValue || '');
+  const effectiveDie = dieOverride || diePart;
+  if (Number.isFinite(countValue) && countValue > 0) {
+    return effectiveDie ? `${countValue}${effectiveDie}` : String(countValue);
   }
 
-  // Handle ${formula} - evaluate pool formula and replace with result
-  if (result.includes('${formula}')) {
-    const benefits = normalizeBenefits(feature?.benefits);
-    const poolBenefit = benefits.find((b) => normalizeBenefitType(b?.type) === 'pool' && b?.value === 'formula');
-    
-    if (poolBenefit && poolBenefit.formula) {
-      const level = getCharacterLevel(character);
-      const formulaValue = evaluatePoolFormula(poolBenefit.formula, level, modifierMap);
-      result = result.replaceAll('${formula}', String(formulaValue));
-    } else {
-      // If no pool formula found, replace with empty string or 0
-      result = result.replaceAll('${formula}', '0');
-    }
-  }
-
-  return result;
+  return effectiveDie || '';
 }
 
 // Helper function for weapon proficiency
@@ -436,6 +581,96 @@ export default function ActionsTab({
   const [activeSubtab, setActiveSubtab] = useState('actions');
   const [selectedSpell, setSelectedSpell] = useState(null);
   const [isSpellModalOpen, setIsSpellModalOpen] = useState(false);
+  const [sneakModifierUses, setSneakModifierUses] = useState({});
+
+  // Find attuned items with sneak_die_modifier benefits
+  const sneakDieModifierItems = useMemo(() => {
+    const inventory = Array.isArray(character?.inventory) ? character.inventory : [];
+    const result = [];
+    inventory.forEach((inventoryItem) => {
+      const magicItem = inventoryItem?.magic_item;
+      if (!magicItem) return;
+      if (isMagicItemHidden(magicItem)) return;
+      if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) return;
+      const itemBenefits = normalizeBenefits(
+        magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
+      );
+      const modifierBenefit = itemBenefits.find(
+        (b) => normalizeBenefitType(b?.type) === 'sneak_die_modifier'
+      );
+      if (!modifierBenefit) return;
+      const chargeSource = modifierBenefit.charge_source;
+      const usesBenefit = itemBenefits.find(
+        (b) => normalizeBenefitType(b?.type) === 'uses' && b?.name === chargeSource
+      );
+      result.push({
+        inventoryItemId: inventoryItem.id,
+        magicItemName: magicItem.name,
+        chargeSource,
+        chargeScaledDie: modifierBenefit.charge_scaled_die || {},
+        targetFeature: modifierBenefit.target_feature,
+        usesMax: usesBenefit?.max ?? 0,
+        usesBase: Math.max(0, Number(usesBenefit?.base) || 0),
+      });
+    });
+    return result;
+  }, [character?.inventory]);
+
+  // Load modifier uses from localStorage on mount / character change
+  useEffect(() => {
+    if (!character?.id) return;
+    const uses = {};
+    sneakDieModifierItems.forEach((item) => {
+      const stored = localStorage.getItem(`item_uses_${character.id}_${item.inventoryItemId}`);
+      uses[item.inventoryItemId] = stored !== null ? parseInt(stored, 10) : item.usesBase;
+    });
+    setSneakModifierUses(uses);
+  }, [character?.id, sneakDieModifierItems]);
+
+  // Stay in sync with inventory card / modal via events
+  useEffect(() => {
+    const handleUsesChanged = (e) => {
+      const { itemId, newUses } = e.detail;
+      setSneakModifierUses((prev) => ({ ...prev, [itemId]: newUses }));
+    };
+    const handleLongRest = (e) => {
+      if (e?.detail?.characterId && e.detail.characterId !== character?.id) return;
+      const uses = {};
+      sneakDieModifierItems.forEach((item) => {
+        uses[item.inventoryItemId] = item.usesBase;
+      });
+      setSneakModifierUses(uses);
+    };
+    window.addEventListener('itemUsesChanged', handleUsesChanged);
+    window.addEventListener('longRestPerformed', handleLongRest);
+    return () => {
+      window.removeEventListener('itemUsesChanged', handleUsesChanged);
+      window.removeEventListener('longRestPerformed', handleLongRest);
+    };
+  }, [character?.id, sneakDieModifierItems]);
+
+  const handleSneakModifierUsesChange = useCallback(
+    (itemId, maxUses, requestedUses) => {
+      const newUses = Math.max(0, Math.min(maxUses, requestedUses));
+      setSneakModifierUses((prev) => ({ ...prev, [itemId]: newUses }));
+      if (character?.id) {
+        localStorage.setItem(`item_uses_${character.id}_${itemId}`, String(newUses));
+      }
+      window.dispatchEvent(new CustomEvent('itemUsesChanged', { detail: { itemId, newUses } }));
+    },
+    [character?.id]
+  );
+
+  // Pick the overriding die based on current charges
+  const sneakDieOverride = useMemo(() => {
+    for (const modifier of sneakDieModifierItems) {
+      const currentCharges = sneakModifierUses[modifier.inventoryItemId] ?? modifier.usesBase;
+      const die =
+        modifier.chargeScaledDie[String(currentCharges)] ?? modifier.chargeScaledDie['0'];
+      if (die) return die;
+    }
+    return null;
+  }, [sneakDieModifierItems, sneakModifierUses]);
 
   const getConditionalMeleeBonus = useMemo(() => {
     return (target, attack, hands = 1) => {
@@ -894,6 +1129,61 @@ export default function ActionsTab({
     return items;
   }, [character]);
 
+  // Build sneak list from features and magic items
+  const sneakFeatures = useMemo(() => {
+    const items = [];
+
+    if (character?.features && Array.isArray(character.features)) {
+      character.features.forEach((feature) => {
+        const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+        const sneakBenefits = benefits.filter((benefit) => normalizeBenefitType(benefit?.type) === 'sneak');
+
+        if (!sneakBenefits.length) return;
+
+        sneakBenefits.forEach((benefit, benefitIndex) => {
+          const prioritizedBenefits = [
+            benefit,
+            ...benefits.filter((_, idx) => idx !== benefitIndex)
+          ];
+
+          const sneakFeature = {
+            ...feature,
+            name: benefit?.name || feature?.name,
+            description: benefit?.description || benefit?.effect || feature?.description,
+            benefits: prioritizedBenefits,
+          };
+
+          items.push({
+            type: 'feature',
+            data: sneakFeature,
+            id: `feature-${feature.id || feature.name}-sneak-${benefitIndex}`
+          });
+        });
+      });
+    }
+
+    const magicItemSneakFeatures = getMagicItemActionFeatures(character, 'sneak');
+    magicItemSneakFeatures.forEach((feature) => {
+      items.push({
+        type: 'feature',
+        data: feature,
+        id: `feature-${feature.id || feature.name}`
+      });
+    });
+
+    items.sort((a, b) => {
+      const aIsSneakAttack = isSneakAttackFeatureName(a.data?.name);
+      const bIsSneakAttack = isSneakAttackFeatureName(b.data?.name);
+      if (aIsSneakAttack !== bIsSneakAttack) return aIsSneakAttack ? -1 : 1;
+
+      const nameA = a.data?.name || '';
+      const nameB = b.data?.name || '';
+      return nameA.localeCompare(nameB);
+    });
+
+    return items;
+  }, [character]);
+
   // Calculate spell attack bonus and save DC (borrowed from SpellsTab logic)
   const spellAbilityMod = useMemo(() => {
     if (!character?.classes || !derivedMods) return 0;
@@ -908,6 +1198,12 @@ export default function ActionsTab({
 
   const spellAttackBonus = (proficiencyBonus || 0) + spellAbilityMod;
   const spellSaveDC = 8 + (proficiencyBonus || 0) + spellAbilityMod;
+  const cunningStrikeDC = 8 + (proficiencyBonus || 0) + (derivedMods?.dexterity || 0);
+  const sneakAttackDamage = useMemo(() => {
+    const sneakAttackItem = sneakFeatures.find((item) => isSneakAttackFeatureName(item?.data?.name));
+    if (!sneakAttackItem) return '';
+    return resolveSneakDamageDisplay(sneakAttackItem.data, character, derivedMods, sneakDieOverride);
+  }, [sneakFeatures, character, derivedMods, sneakDieOverride]);
 
   return (
     <div className="actions-tab">
@@ -931,6 +1227,12 @@ export default function ActionsTab({
           onClick={() => setActiveSubtab('reactions')}
         >
           Reactions
+        </button>
+        <button
+          className={activeSubtab === 'sneak' ? 'subtab-btn sneak active' : 'subtab-btn sneak'}
+          onClick={() => setActiveSubtab('sneak')}
+        >
+          Sneak
         </button>
       </div>
 
@@ -1126,7 +1428,8 @@ export default function ActionsTab({
                     // Render feature
                     const feature = item.data;
                     const featureId = feature.id || `feature-${feature.name}`;
-                    const shortText = resolveFeatureShortText(feature, character, proficiencyBonus, derivedMods);
+                    const shortText = resolveFeatureShortText(feature, character, proficiencyBonus, derivedMods, 'bonus_action');
+                    const descriptionText = resolveFeatureTextTemplate(feature?.description, feature, character, proficiencyBonus, derivedMods, 'bonus_action');
                     
                     return (
                       <div key={item.id} className="bonus-action-feature">
@@ -1143,9 +1446,9 @@ export default function ActionsTab({
                           />
                         )}
                         
-                        {shortText && (
+                        {(shortText || descriptionText) && (
                           <div className="bonus-action-feature-short">
-                            {renderSpellDescription(shortText)}
+                            {renderSpellDescription(shortText || descriptionText)}
                           </div>
                         )}
                       </div>
@@ -1196,7 +1499,8 @@ export default function ActionsTab({
                     // Render feature
                     const feature = item.data;
                     const featureId = feature.id || `feature-${feature.name}`;
-                    const shortText = resolveFeatureShortText(feature, character, proficiencyBonus, derivedMods);
+                    const shortText = resolveFeatureShortText(feature, character, proficiencyBonus, derivedMods, 'reaction');
+                    const descriptionText = resolveFeatureTextTemplate(feature?.description, feature, character, proficiencyBonus, derivedMods, 'reaction');
                     
                     return (
                       <div key={item.id} className="reaction-feature">
@@ -1213,9 +1517,9 @@ export default function ActionsTab({
                           />
                         )}
                         
-                        {(shortText || feature.description) && (
+                        {(shortText || descriptionText) && (
                           <div className="reaction-feature-short">
-                            {renderSpellDescription(shortText || feature.description)}
+                            {renderSpellDescription(shortText || descriptionText)}
                           </div>
                         )}
                       </div>
@@ -1227,6 +1531,90 @@ export default function ActionsTab({
               </div>
             ) : (
               <p className="info-text">No reactions available.</p>
+            )}
+          </>
+        )}
+        {activeSubtab === 'sneak' && (
+          <>
+            {sneakDieModifierItems.length > 0 && (
+              <div className="sneak-mettle-row">
+                {sneakDieModifierItems.map((modifier) => {
+                  const current =
+                    sneakModifierUses[modifier.inventoryItemId] ?? modifier.usesBase;
+                  return (
+                    <div key={modifier.inventoryItemId} className="sneak-mettle-tracker">
+                      <span className="sneak-mettle-name">{modifier.chargeSource}</span>
+                      <div className="sneak-mettle-boxes">
+                        {Array.from({ length: Math.max(0, modifier.usesMax) }, (_, index) => {
+                          const boxUsed = index < current;
+                          const nextUses = boxUsed && current === index + 1 ? index : index + 1;
+                          return (
+                            <button
+                              key={`${modifier.inventoryItemId}-mettle-box-${index}`}
+                              className={`use-box${boxUsed ? ' used' : ''}`}
+                              onClick={() =>
+                                handleSneakModifierUsesChange(
+                                  modifier.inventoryItemId,
+                                  modifier.usesMax,
+                                  nextUses
+                                )
+                              }
+                              title={`${modifier.chargeSource}: ${index + 1}`}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="sneak-subtab-header">
+              {sneakAttackDamage ? (
+                <span className="sneak-metric-text" title="Sneak attack damage">
+                  Sneak Attack: {sneakAttackDamage}
+                </span>
+              ) : null}
+              {sneakAttackDamage ? <span className="sneak-metric-separator">|</span> : null}
+              <span className="sneak-metric-text" title="Cunning Strike save DC">
+                Cunning Strike DC: {cunningStrikeDC}
+              </span>
+            </div>
+            {sneakFeatures.length > 0 ? (
+              <div className="sneak-container">
+                {sneakFeatures.map((item) => {
+                  const feature = item.data;
+                  const featureId = item.id;
+                  const isPinnedSneakAttack = isSneakAttackFeatureName(feature?.name);
+                  const shortText = resolveFeatureShortText(feature, character, proficiencyBonus, derivedMods, 'sneak');
+                  const descriptionText = resolveFeatureBenefitDescription(feature, character, proficiencyBonus, derivedMods, 'sneak');
+
+                  return (
+                    <div key={item.id} className={isPinnedSneakAttack ? 'sneak-feature is-sticky-sneak' : 'sneak-feature'}>
+                      <div className="feature-header">
+                        <h4 className="feature-name">{feature.name}</h4>
+                      </div>
+
+                      {feature.max_uses && FeatureUsesTracker && (
+                        <FeatureUsesTracker
+                          maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character?.level, feature)}
+                          featureId={featureId}
+                          storedUses={usesState[featureId]}
+                          onUsesChange={onUsesChange}
+                        />
+                      )}
+
+                      {(shortText || descriptionText) && (
+                        <div className="sneak-feature-short">
+                          {renderSpellDescription(shortText || descriptionText)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="info-text">No sneak features available.</p>
             )}
           </>
         )}

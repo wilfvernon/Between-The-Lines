@@ -1260,6 +1260,17 @@ Last Updated: 2026-03-04
   background: var(--candlekeep-accent);
 }
 
+.subtab-btn.sneak.active {
+  color: #c8e8bf;
+  background:
+    linear-gradient(rgba(20, 40, 20, 0.45), rgba(20, 40, 20, 0.45)),
+    url('/textures/materials/green-leather.png') center / cover no-repeat;
+}
+
+.subtab-btn.sneak.active::after {
+  background: #9ad181;
+}
+
 
 .feature-subtab-content {
   margin-top: 20px;
@@ -1870,6 +1881,151 @@ Last Updated: 2026-03-04
   font-style: normal;
   font-weight: 600;
 }
+
+/* Sneak - green leather texture */
+.sneak-container {
+  position: relative;
+  background-image: url('/textures/materials/green-leather.png');
+  background-size: cover;
+  background-position: center;
+  border: 2px solid #39553a;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.sneak-mettle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.sneak-mettle-tracker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(30, 55, 30, 0.75);
+  border: 1px solid rgba(120, 180, 120, 0.35);
+  border-radius: 6px;
+  padding: 5px 12px;
+}
+
+.sneak-mettle-name {
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #d6efcf;
+  letter-spacing: 0.3px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.75);
+}
+
+.sneak-mettle-boxes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sneak-mettle-boxes .use-box {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(150, 205, 140, 0.75);
+  background: rgba(30, 55, 30, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.sneak-mettle-boxes .use-box:hover {
+  background: rgba(110, 170, 100, 0.3);
+  border-color: rgba(170, 225, 160, 0.95);
+}
+
+.sneak-mettle-boxes .use-box.used {
+  background: #7fb873;
+  border-color: #5f9654;
+  box-shadow: inset 0 0 0 2px rgba(225, 244, 214, 0.95);
+}
+
+.sneak-subtab-header {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #d6efcf;
+  font-family: 'Cinzel', 'Georgia', serif;
+  letter-spacing: 0.3px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.75);
+}
+
+.sneak-metric-text {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.sneak-metric-separator {
+  opacity: 0.85;
+}
+
+.sneak-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 40, 20, 0.72);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.sneak-feature {
+  position: relative;
+  z-index: 1;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(160, 200, 160, 0.2);
+}
+
+.sneak-feature.is-sticky-sneak {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: rgba(24, 48, 24, 0.9);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+.sneak-feature:last-child {
+  border-bottom: none;
+}
+
+.sneak-feature .feature-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.sneak-feature .feature-name {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #d6efcf;
+  font-family: 'Cinzel', 'Georgia', serif;
+  letter-spacing: 0.3px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.sneak-feature .sneak-feature-short {
+  margin: 6px 0 0;
+  font-size: 0.9rem;
+  color: #c7dfbf;
+  line-height: 1.5;
+}
+
+.sneak-feature .sneak-feature-short .spell-special-text {
+  color: #f3e58c;
+  font-style: normal;
+  font-weight: 600;
+}
+
 
 /* Feature Groups */
 .feature-group {

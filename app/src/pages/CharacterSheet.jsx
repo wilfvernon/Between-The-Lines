@@ -480,11 +480,23 @@ const evaluatePoolFormula = (formula, level, abilityModifiers = {}) => {
 
   normalizedFormula = normalizedFormula.replace(/\blevel\b/gi, String(level || 1));
 
+  let roundingMode = null;
+  const roundingMatch = normalizedFormula.match(/^(.*?)(ru|rd)\s*$/i);
+  if (roundingMatch) {
+    normalizedFormula = roundingMatch[1].trim();
+    roundingMode = roundingMatch[2].toLowerCase();
+  }
+
   try {
     if (!/^[\d+\-*/().\s]+$/.test(normalizedFormula)) return 0;
     const result = Function(`"use strict"; return (${normalizedFormula})`)();
     if (typeof result === 'number' && Number.isFinite(result)) {
-      return Math.max(0, Math.floor(result));
+      const rounded = roundingMode === 'ru'
+        ? Math.ceil(result)
+        : roundingMode === 'rd'
+          ? Math.floor(result)
+          : Math.floor(result);
+      return Math.max(0, rounded);
     }
   } catch {
     return 0;
@@ -522,10 +534,90 @@ const getFeaturePool = (feature, characterLevel, abilityModifiers) => {
 
   return {
     name: poolBenefit?.name || null,
+    base: Math.max(0, Math.floor(Number(poolBenefit?.base) || 0)),
     max: poolMax,
     poolType: String(rawPoolType || '').toLowerCase().trim() || null,
     barrierFill: String(rawBarrierFill || '').toLowerCase().trim() || null,
   };
+};
+
+const interpolateFeatureText = (text, feature, characterLevel = 1, proficiencyBonus = 0, abilityModifiers = {}, preferredBenefitType = null) => {
+  const template = typeof text === 'string' ? text : '';
+  if (!template) return '';
+
+  let result = template;
+  const level = Math.max(1, Number(characterLevel) || 1);
+
+  const modifierMap = {
+    strength: Number.isFinite(abilityModifiers?.strength) ? abilityModifiers.strength : 0,
+    dexterity: Number.isFinite(abilityModifiers?.dexterity) ? abilityModifiers.dexterity : 0,
+    constitution: Number.isFinite(abilityModifiers?.constitution) ? abilityModifiers.constitution : 0,
+    intelligence: Number.isFinite(abilityModifiers?.intelligence) ? abilityModifiers.intelligence : 0,
+    wisdom: Number.isFinite(abilityModifiers?.wisdom) ? abilityModifiers.wisdom : 0,
+    charisma: Number.isFinite(abilityModifiers?.charisma) ? abilityModifiers.charisma : 0,
+  };
+
+  result = result.replaceAll('${proficiency}', String(proficiencyBonus || 0));
+  result = result.replaceAll('${level}', String(level));
+
+  Object.entries(modifierMap).forEach(([ability, modifier]) => {
+    result = result.replaceAll(`\${${ability}}`, String(modifier));
+    result = result.replaceAll(`\${${ability}_mod}`, String(modifier >= 0 ? `+${modifier}` : modifier));
+  });
+
+  const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
+  const normalizedPreferredType = preferredBenefitType ? normalizeBenefitType(preferredBenefitType) : null;
+
+  const pickBenefitWithField = (fieldName) => {
+    const hasField = (benefit) => {
+      const fieldValue = benefit?.[fieldName];
+      return typeof fieldValue === 'string' ? fieldValue.trim().length > 0 : fieldValue !== null && fieldValue !== undefined;
+    };
+
+    if (normalizedPreferredType) {
+      const typed = benefits.find((b) => hasField(b) && normalizeBenefitType(b?.type) === normalizedPreferredType);
+      if (typed) return typed;
+
+      const untyped = benefits.find((b) => hasField(b) && !b?.type);
+      if (untyped) return untyped;
+    }
+
+    return benefits.find((b) => hasField(b));
+  };
+
+  if (result.includes('${formula}')) {
+    const formulaSource = pickBenefitWithField('formula');
+    const formulaValue = formulaSource?.formula
+      ? evaluatePoolFormula(formulaSource.formula, level, modifierMap)
+      : 0;
+    result = result.replaceAll('${formula}', String(formulaValue));
+  }
+
+  if (result.includes('${die}')) {
+    const dieSource = pickBenefitWithField('die');
+    result = result.replaceAll('${die}', typeof dieSource?.die === 'string' ? dieSource.die : '');
+  }
+
+  if (result.includes('${value}')) {
+    const valueSource = pickBenefitWithField('value') || pickBenefitWithField('formula');
+    let resolvedValue = '0';
+
+    if (valueSource) {
+      if (typeof valueSource.value === 'number') {
+        resolvedValue = String(valueSource.value);
+      } else if (typeof valueSource.value === 'string' && valueSource.value.trim().toLowerCase() === 'formula' && valueSource.formula) {
+        resolvedValue = String(evaluatePoolFormula(valueSource.formula, level, modifierMap));
+      } else if (typeof valueSource.value === 'string' && valueSource.value.trim()) {
+        resolvedValue = valueSource.value;
+      } else if (typeof valueSource.formula === 'string' && valueSource.formula.trim()) {
+        resolvedValue = String(evaluatePoolFormula(valueSource.formula, level, modifierMap));
+      }
+    }
+
+    result = result.replaceAll('${value}', resolvedValue);
+  }
+
+  return result;
 };
 
 const isFeatureToggleIgnored = (target) => {
@@ -1544,13 +1636,36 @@ function CharacterSheet() {
   // Combine all bonuses (from features + ASIs + active conditional selections)
   const allBonuses = [...baseBonuses, ...conditionalBonuses];
 
-  // Calculate base AC from equipped armor (with proficiency checks)
-  const baseAC = calculateBaseAC(character.inventory, baseMods.dexterity, character, featuresToProcess, {
+  // First pass: derive abilities/modifiers, then recalculate AC with derived DEX.
+  const initialBaseAC = calculateBaseAC(character.inventory, baseMods.dexterity, character, featuresToProcess, {
     activeSelections: activeFeatureSelections,
     activeStances,
   });
 
-  // Derive character stats using bonus engine
+  const { derived: preliminaryDerivedStats } = deriveCharacterStats({
+    base: {
+      abilities: baseAbilities,
+      maxHP: character.max_hp || 0,
+      proficiency: proficiencyBonus,
+      acBase: initialBaseAC,
+      initiativeBase: baseMods.dexterity,
+      passivePerceptionBase: 10 + baseMods.wisdom,
+      senses: character.senses || [],
+      speeds: character.speeds || {}
+    },
+    bonuses: allBonuses
+  });
+
+  const derivedDexForAC = Number.isFinite(preliminaryDerivedStats?.modifiers?.dexterity)
+    ? preliminaryDerivedStats.modifiers.dexterity
+    : baseMods.dexterity;
+
+  const baseAC = calculateBaseAC(character.inventory, derivedDexForAC, character, featuresToProcess, {
+    activeSelections: activeFeatureSelections,
+    activeStances,
+  });
+
+  // Final pass: use derived-DEX AC as the AC base for final stat derivation.
   const { derived: derivedStats, totals: statsTotals } = deriveCharacterStats({
     base: {
       abilities: baseAbilities,
@@ -2017,8 +2132,8 @@ function CharacterSheet() {
         abilityModifiers={derivedMods}
         customModifiers={acCustomModifiers}
         customOverride={acCustomOverride}
-        armorInfo={getArmorInfo(character.inventory, baseMods.dexterity, character, character.features || [])}
-        dexModifier={baseMods.dexterity}
+        armorInfo={getArmorInfo(character.inventory, derivedMods.dexterity, character, character.features || [])}
+        dexModifier={derivedMods.dexterity}
         onAddCustomModifier={(modifier) => {
           const updated = [...acCustomModifiers, modifier];
           setACCustomModifiers(updated);
@@ -2270,11 +2385,13 @@ const getMagicItemUses = (magicItem) => {
     // New preferred shape: { uses: { max, type, recharge } }
     if (entry.uses && typeof entry.uses === 'object') return entry.uses;
 
-    // Alternate structured shape: { type: 'uses', max, recharge }
-    if (String(entry.type || '').toLowerCase() === 'uses') {
+    // Alternate structured shape: { type: 'uses' | 'charges', max, recharge, base }
+    const entryType = String(entry.type || '').toLowerCase();
+    if (entryType === 'uses' || entryType === 'charges') {
       return {
         max: entry.max,
-        type: entry.useType || entry.usesType || 'uses',
+        base: entry.base,
+        type: entry.useType || entry.usesType || entryType,
         recharge: entry.recharge
       };
     }
@@ -2302,6 +2419,11 @@ const getMagicItemUses = (magicItem) => {
   return null;
 };
 
+const getMagicItemPool = (magicItem, characterLevel, abilityModifiers) => {
+  if (!magicItem) return null;
+  return getFeaturePool(magicItem, characterLevel, abilityModifiers);
+};
+
 // Tab 4: Inventory
 function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePocket, setActivePocket }) {
   const [goldInput, setGoldInput] = useState(character?.gold ?? 0);
@@ -2312,6 +2434,7 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
   const [isSearching, setIsSearching] = useState(false);
   const searchInputRef = useRef(null);
   const [itemUsesState, setItemUsesState] = useState({});
+  const [itemPoolState, setItemPoolState] = useState({});
   
   const items = character?.inventory || [];
   const customPockets = getCustomPockets(items);
@@ -2324,11 +2447,33 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
     const uses = {};
     items.forEach((item) => {
       const stored = localStorage.getItem(`item_uses_${character.id}_${item.id}`);
-      if (stored) {
-        uses[item.id] = parseInt(stored, 10);
-      }
+      const usesData = item?.magic_item ? getMagicItemUses(item.magic_item) : null;
+      const baseUses = Math.max(0, Math.floor(Number(usesData?.base) || 0));
+      uses[item.id] = stored ? parseInt(stored, 10) : baseUses;
     });
     setItemUsesState(uses);
+  }, [character?.id, character?.inventory]);
+
+  // Load all item pools from localStorage
+  useEffect(() => {
+    if (!character?.id) return;
+    const pools = {};
+    items.forEach((item) => {
+      const stored = localStorage.getItem(`item_pool_${character.id}_${item.id}`);
+      const poolData = item?.magic_item
+        ? getMagicItemPool(item.magic_item, character.level, {
+          strength: Math.floor((character.strength - 10) / 2),
+          dexterity: Math.floor((character.dexterity - 10) / 2),
+          constitution: Math.floor((character.constitution - 10) / 2),
+          intelligence: Math.floor((character.intelligence - 10) / 2),
+          wisdom: Math.floor((character.wisdom - 10) / 2),
+          charisma: Math.floor((character.charisma - 10) / 2)
+        })
+        : null;
+      const basePool = Math.max(0, Math.floor(Number(poolData?.base) || 0));
+      pools[item.id] = stored ? parseInt(stored, 10) : basePool;
+    });
+    setItemPoolState(pools);
   }, [character?.id, character?.inventory]);
   
   // Listen for uses changes from modal
@@ -2337,9 +2482,18 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
       const { itemId, newUses } = e.detail;
       setItemUsesState(prev => ({ ...prev, [itemId]: newUses }));
     };
+
+    const handlePoolChanged = (e) => {
+      const { itemId, newValue } = e.detail;
+      setItemPoolState(prev => ({ ...prev, [itemId]: newValue }));
+    };
     
     window.addEventListener('itemUsesChanged', handleUsesChanged);
-    return () => window.removeEventListener('itemUsesChanged', handleUsesChanged);
+    window.addEventListener('itemPoolChanged', handlePoolChanged);
+    return () => {
+      window.removeEventListener('itemUsesChanged', handleUsesChanged);
+      window.removeEventListener('itemPoolChanged', handlePoolChanged);
+    };
   }, []);
 
   // Reset in-memory item uses when a long rest is performed
@@ -2347,6 +2501,7 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
     const handleLongRest = (e) => {
       if (e?.detail?.characterId && e.detail.characterId !== character?.id) return;
       setItemUsesState({});
+      setItemPoolState({});
     };
 
     window.addEventListener('longRestPerformed', handleLongRest);
@@ -2357,6 +2512,14 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
     setItemUsesState(prev => ({ ...prev, [itemId]: newUses }));
     if (character?.id) {
       localStorage.setItem(`item_uses_${character.id}_${itemId}`, String(newUses));
+    }
+    window.dispatchEvent(new CustomEvent('itemUsesChanged', { detail: { itemId, newUses } }));
+  };
+
+  const handleItemPoolChange = (itemId, newValue) => {
+    setItemPoolState(prev => ({ ...prev, [itemId]: newValue }));
+    if (character?.id) {
+      localStorage.setItem(`item_pool_${character.id}_${itemId}`, String(newValue));
     }
   };
 
@@ -2450,6 +2613,16 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
           const rarityClass = getRarityClass(item);
           const itemClasses = `inventory-item ${isMagic ? 'magic' : ''} ${item.attuned ? 'attuned' : ''}`;
           const usesData = isMagic ? getMagicItemUses(item.magic_item) : null;
+          const poolData = isMagic
+            ? getMagicItemPool(item.magic_item, character.level, {
+              strength: Math.floor((character.strength - 10) / 2),
+              dexterity: Math.floor((character.dexterity - 10) / 2),
+              constitution: Math.floor((character.constitution - 10) / 2),
+              intelligence: Math.floor((character.intelligence - 10) / 2),
+              wisdom: Math.floor((character.wisdom - 10) / 2),
+              charisma: Math.floor((character.charisma - 10) / 2)
+            })
+            : null;
           const maxUses = usesData ? calculateMaxUses(
             usesData.max,
             Math.ceil(character.level / 4) + 1,
@@ -2461,7 +2634,9 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
               wisdom: Math.floor((character.wisdom - 10) / 2),
               charisma: Math.floor((character.charisma - 10) / 2)
             },
-            character.level
+            character.level,
+            null,
+            usesData.base
           ) : 0;
 
           return (
@@ -2473,8 +2648,19 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
                     <FeatureUsesTracker
                       maxUses={maxUses}
                       featureId={`item-card-${item.id}`}
-                      storedUses={itemUsesState[item.id] || 0}
+                      storedUses={itemUsesState[item.id] ?? Math.max(0, Math.floor(Number(usesData?.base) || 0))}
                       onUsesChange={(_, newUses) => handleItemUsesChange(item.id, newUses)}
+                    />
+                  </div>
+                )}
+                {poolData && poolData.max > 0 && (
+                  <div className="item-uses-inline" onClick={(e) => e.stopPropagation()}>
+                    <FeaturePoolTracker
+                      poolMax={poolData.max}
+                      featureId={`item-card-${item.id}-pool`}
+                      poolName={poolData.name || 'Pool'}
+                      storedValue={itemPoolState[item.id] ?? Math.max(0, Math.floor(Number(poolData?.base) || 0))}
+                      onPoolChange={(_, newValue) => handleItemPoolChange(item.id, newValue)}
                     />
                   </div>
                 )}
@@ -2874,7 +3060,16 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
   const [itemUses, setItemUses] = useState(() => {
     if (!characterId || !item?.id) return 0;
     const stored = localStorage.getItem(`item_uses_${characterId}_${item.id}`);
-    return stored ? parseInt(stored, 10) : 0;
+    const usesData = item?.magic_item ? getMagicItemUses(item.magic_item) : null;
+    const baseUses = Math.max(0, Math.floor(Number(usesData?.base) || 0));
+    return stored ? parseInt(stored, 10) : baseUses;
+  });
+  const [itemPool, setItemPool] = useState(() => {
+    if (!characterId || !item?.id) return null;
+    const stored = localStorage.getItem(`item_pool_${characterId}_${item.id}`);
+    const poolData = item?.magic_item ? getMagicItemPool(item.magic_item, character?.level || 1, abilityModifiers || {}) : null;
+    const basePool = Math.max(0, Math.floor(Number(poolData?.base) || 0));
+    return stored ? parseInt(stored, 10) : basePool;
   });
   
   // Sync quantity and pocket when item changes
@@ -2889,9 +3084,15 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
     // Load stored uses for this item
     if (characterId && item?.id) {
       const stored = localStorage.getItem(`item_uses_${characterId}_${item.id}`);
-      setItemUses(stored ? parseInt(stored, 10) : 0);
+      const usesData = item?.magic_item ? getMagicItemUses(item.magic_item) : null;
+      const baseUses = Math.max(0, Math.floor(Number(usesData?.base) || 0));
+      setItemUses(stored ? parseInt(stored, 10) : baseUses);
+      const storedPool = localStorage.getItem(`item_pool_${characterId}_${item.id}`);
+      const poolData = item?.magic_item ? getMagicItemPool(item.magic_item, character?.level, abilityModifiers) : null;
+      const basePool = Math.max(0, Math.floor(Number(poolData?.base) || 0));
+      setItemPool(storedPool ? parseInt(storedPool, 10) : basePool);
     }
-  }, [item?.id, characterId]);
+  }, [item?.id, characterId, item?.magic_item, character?.level, abilityModifiers]);
   
   const handleItemUsesChange = (newUses) => {
     setItemUses(newUses);
@@ -2904,16 +3105,31 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
     }
   };
 
+  const handleItemPoolChange = (newValue) => {
+    setItemPool(newValue);
+    if (characterId && item?.id) {
+      localStorage.setItem(`item_pool_${characterId}_${item.id}`, String(newValue));
+      window.dispatchEvent(new CustomEvent('itemPoolChanged', {
+        detail: { itemId: item.id, newValue }
+      }));
+    }
+  };
+
   // Reset modal's in-memory uses on long rest
   useEffect(() => {
     const handleLongRest = (e) => {
       if (e?.detail?.characterId && e.detail.characterId !== characterId) return;
-      setItemUses(0);
+      const usesData = item?.magic_item ? getMagicItemUses(item.magic_item) : null;
+      const poolData = item?.magic_item ? getMagicItemPool(item.magic_item, character?.level, abilityModifiers) : null;
+      const baseUses = Math.max(0, Math.floor(Number(usesData?.base) || 0));
+      const basePool = Math.max(0, Math.floor(Number(poolData?.base) || 0));
+      setItemUses(baseUses);
+      setItemPool(basePool);
     };
 
     window.addEventListener('longRestPerformed', handleLongRest);
     return () => window.removeEventListener('longRestPerformed', handleLongRest);
-  }, [characterId]);
+  }, [characterId, item?.magic_item, character?.level, abilityModifiers]);
   
   if (!isOpen || !item) return null;
 
@@ -3003,7 +3219,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
             if (!isMagicItem) return null;
             const usesData = getMagicItemUses(itemData);
             if (!usesData) return null;
-            const maxUses = calculateMaxUses(usesData.max, proficiencyBonus, abilityModifiers, character.level);
+            const maxUses = calculateMaxUses(usesData.max, proficiencyBonus, abilityModifiers, character.level, null, usesData.base);
             if (maxUses <= 0) return null;
             
             // Derive label from type (e.g., "charges", "uses") and capitalize
@@ -3016,7 +3232,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
                   <FeatureUsesTracker 
                     maxUses={maxUses}
                     featureId={`item-${item.id}`}
-                    storedUses={itemUses}
+                    storedUses={itemUses ?? Math.max(0, Math.floor(Number(usesData?.base) || 0))}
                     onUsesChange={(_, newUses) => handleItemUsesChange(newUses)}
                   />
                 </div>
@@ -3025,6 +3241,28 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
                     Recharges at {usesData.recharge.when}
                   </div>
                 )}
+              </div>
+            );
+          })()}
+
+          {/* Magic Item Pool */}
+          {(() => {
+            if (!isMagicItem) return null;
+            const poolData = getMagicItemPool(itemData, character.level, abilityModifiers);
+            if (!poolData || poolData.max <= 0) return null;
+
+            return (
+              <div className="item-section">
+                <div className="item-uses-row">
+                  <div className="item-uses-label">{poolData.name || 'Pool'}:</div>
+                  <FeaturePoolTracker
+                    poolMax={poolData.max}
+                    featureId={`item-${item.id}-pool`}
+                    poolName={null}
+                    storedValue={itemPool ?? Math.max(0, Math.floor(Number(poolData?.base) || 0))}
+                    onPoolChange={(_, newValue) => handleItemPoolChange(newValue)}
+                  />
+                </div>
               </div>
             );
           })()}
@@ -3442,7 +3680,7 @@ const getUseScalingMap = (feature) => {
 
 // Helper to calculate max uses from strings like:
 // "charisma", "proficiency", "level", "level/2ru", "level/2rd", "3", "scaling"
-const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, characterLevel = 1, feature = null) => {
+const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, characterLevel = 1, feature = null, explicitBase = null) => {
   if (maxUsesValue === null || maxUsesValue === undefined || maxUsesValue === '') return 0;
 
   const abilities = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
@@ -3979,7 +4217,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                   {feature.description && (
                     <FeatureDescriptionBlock
                       featureId={featureId}
-                      description={feature.description}
+                      description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -4046,7 +4284,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                   {feature.description && (
                     <FeatureDescriptionBlock
                       featureId={featureId}
-                      description={feature.description}
+                      description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -4113,7 +4351,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                   {feature.description && (
                     <FeatureDescriptionBlock
                       featureId={featureId}
-                      description={feature.description}
+                      description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -4180,7 +4418,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                   {feature.description && (
                     <FeatureDescriptionBlock
                       featureId={featureId}
-                      description={feature.description}
+                      description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -4312,7 +4550,7 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
             {feature.description && (
               <FeatureDescriptionBlock
                 featureId={featureId}
-                description={feature.description}
+                description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
                 expanded={!!expandedDescriptions[featureId]}
                 onToggle={onDescriptionToggle}
               />
@@ -4401,7 +4639,7 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
             {feature.description && (
               <FeatureDescriptionBlock
                 featureId={featureId}
-                description={feature.description}
+                description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
                 expanded={!!expandedDescriptions[featureId]}
                 onToggle={onDescriptionToggle}
               />
@@ -4471,7 +4709,7 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
               {featDescription && (
                 <FeatureDescriptionBlock
                   featureId={featId}
-                  description={featDescription}
+                  description={interpolateFeatureText(featDescription, feat, character.level, proficiencyBonus, abilityModifiers)}
                   expanded={!!expandedDescriptions[featId]}
                   onToggle={onDescriptionToggle}
                 />
