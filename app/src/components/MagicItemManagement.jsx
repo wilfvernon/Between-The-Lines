@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import PropTypes from 'prop-types';
 import { supabase } from '../lib/supabase';
 import { fetchWikidot } from '../lib/wikidotUtils';
@@ -23,6 +23,30 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
   // Status
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
+  const [existingItems, setExistingItems] = useState([]);
+  const [itemsLoading, setItemsLoading] = useState(false);
+
+  const loadExistingItems = useCallback(async () => {
+    setItemsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('magic_items')
+        .select('id, name, rarity, hidden')
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+      setExistingItems(data || []);
+    } catch (error) {
+      console.error('Failed to load magic items:', error);
+      setStatus(`❌ Failed to load magic items: ${error.message}`);
+    } finally {
+      setItemsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadExistingItems();
+  }, [loadExistingItems]);
 
   const resetForm = () => {
     setName('');
@@ -132,10 +156,38 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
       
       setStatus(`✅ Magic item "${data.name}" saved successfully!`);
       resetForm();
+      await loadExistingItems();
       
     } catch (error) {
       console.error('Save error:', error);
       setStatus(`❌ Save failed: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleHidden = async (item) => {
+    if (!item?.id) return;
+
+    const nextHidden = !Boolean(item.hidden);
+    setLoading(true);
+    setStatus('');
+
+    try {
+      const { error } = await supabase
+        .from('magic_items')
+        .update({ hidden: nextHidden })
+        .eq('id', item.id);
+
+      if (error) throw error;
+
+      setExistingItems((prev) =>
+        prev.map((entry) => (entry.id === item.id ? { ...entry, hidden: nextHidden } : entry))
+      );
+      setStatus(`✅ ${item.name} is now ${nextHidden ? 'hidden' : 'visible'}.`);
+    } catch (error) {
+      console.error('Toggle hidden error:', error);
+      setStatus(`❌ Visibility update failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -388,6 +440,69 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
           {loading ? 'Saving...' : '💾 Save Magic Item'}
         </button>
       </form>
+
+      <div style={{ marginTop: '28px' }}>
+        <h3 style={{ marginBottom: '10px' }}>Existing Magic Items</h3>
+        <p style={{ marginTop: 0, color: '#666', fontSize: '13px' }}>
+          Quick toggle visibility without editing each item.
+        </p>
+
+        {itemsLoading ? (
+          <p style={{ color: '#666' }}>Loading magic items...</p>
+        ) : existingItems.length === 0 ? (
+          <p style={{ color: '#666' }}>No magic items found.</p>
+        ) : (
+          <div style={{
+            border: '1px solid #ddd',
+            borderRadius: '6px',
+            maxHeight: '360px',
+            overflowY: 'auto',
+            background: '#fff'
+          }}>
+            {existingItems.map((item) => {
+              const isHidden = Boolean(item.hidden);
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                    padding: '10px 12px',
+                    borderBottom: '1px solid #eee'
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{item.name}</div>
+                    <div style={{ fontSize: '12px', color: '#666' }}>
+                      {item.rarity || 'Unspecified rarity'}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => handleToggleHidden(item)}
+                    style={{
+                      padding: '8px 10px',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      background: isHidden ? '#2e7d32' : '#ad1457',
+                      color: 'white',
+                      fontWeight: 600,
+                      minWidth: '112px'
+                    }}
+                  >
+                    {isHidden ? 'Set Visible' : 'Set Hidden'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

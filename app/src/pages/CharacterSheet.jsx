@@ -4143,16 +4143,18 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
 
   let subclassFeatures = character.features?.filter(f => getSourceType(f) === 'subclass') || [];
   let invocationFeatures = character.features?.filter(f => getSourceType(f) === 'invocation') || [];
+  let divinityFeatures = character.features?.filter(f => getSourceType(f) === 'divinity') || [];
   let fightingStyleFeatures = character.features?.filter(f => getSourceType(f) === 'fighting') || [];
   let classFeatures = character.features?.filter(f => getSourceType(f) === 'class') || [];
 
   // Sort by level
   subclassFeatures = [...subclassFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   invocationFeatures = [...invocationFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
+  divinityFeatures = [...divinityFeatures].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   fightingStyleFeatures = [...fightingStyleFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   classFeatures = [...classFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   
-  if (subclassFeatures.length === 0 && invocationFeatures.length === 0 && fightingStyleFeatures.length === 0 && classFeatures.length === 0) {
+  if (subclassFeatures.length === 0 && invocationFeatures.length === 0 && divinityFeatures.length === 0 && fightingStyleFeatures.length === 0 && classFeatures.length === 0) {
     return (
       <div className="class-features">
         <p className="info-text">No class features found.</p>
@@ -4348,6 +4350,60 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                     activeStance={activeStances?.[featureId]}
                     onStanceChange={onStanceChange}
                   />
+                  {feature.description && (
+                    <FeatureDescriptionBlock
+                      featureId={featureId}
+                      description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                      expanded={!!expandedDescriptions[featureId]}
+                      onToggle={onDescriptionToggle}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Channel Divinity Options */}
+      {divinityFeatures.length > 0 && (
+        <div className="feature-group">
+          <h4 className="feature-group-header">Channel Divinity Options</h4>
+          <div className="feature-list">
+            {divinityFeatures.map((feature, idx) => {
+              const featureLevel = getSourceLevel(feature);
+              const featureId = feature.id || `divinity-${feature.name || idx}`;
+              const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              return (
+                <div
+                  key={idx}
+                  className="feature-item"
+                  onClick={(event) => {
+                    if (isFeatureToggleIgnored(event.target)) return;
+                    onDescriptionToggle(featureId);
+                  }}
+                >
+                  <div className="feature-header">
+                    <h3 className="feature-name">{feature.name}</h3>
+                    {featureLevel && <span className="feature-source">{featureLevel}</span>}
+                  </div>
+                  {feature.max_uses && (
+                    <FeatureUsesTracker
+                      maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
+                      featureId={featureId}
+                      storedUses={usesState[featureId]}
+                      onUsesChange={onUsesChange}
+                    />
+                  )}
+                  {featurePool && (
+                    <FeaturePoolTracker
+                      poolMax={featurePool.max}
+                      featureId={`${featureId}-pool`}
+                      poolName={featurePool.name}
+                      storedValue={poolState[`${featureId}-pool`]}
+                      onPoolChange={onPoolChange}
+                    />
+                  )}
                   {feature.description && (
                     <FeatureDescriptionBlock
                       featureId={featureId}

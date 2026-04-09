@@ -101,6 +101,15 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
   const speeds = derivedStats?.speeds && typeof derivedStats.speeds === 'object' && Object.keys(derivedStats.speeds).length > 0
     ? derivedStats.speeds
     : {};
+  const damageResistances = Array.isArray(derivedStats?.damage_resistances) ? derivedStats.damage_resistances : [];
+  const damageImmunities = Array.isArray(derivedStats?.damage_immunities) ? derivedStats.damage_immunities : [];
+  const conditionResistances = Array.isArray(derivedStats?.condition_resistances) ? derivedStats.condition_resistances : [];
+  const conditionImmunities = Array.isArray(derivedStats?.condition_immunities) ? derivedStats.condition_immunities : [];
+  const hasDefensiveTraits = damageResistances.length > 0 || damageImmunities.length > 0 || conditionResistances.length > 0 || conditionImmunities.length > 0;
+
+  const formatTraitLabel = (value) => String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/(^.|\s.)/g, (m) => m.toUpperCase());
 
   return (
     <div className="abilities-tab">
@@ -209,6 +218,38 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
           ))}
         </div>
       </section>
+
+      {hasDefensiveTraits && (
+        <section className="section">
+          <h2>Resistances & Immunities</h2>
+          <div className="passive-list">
+            {damageResistances.length > 0 && (
+              <div className="passive-item">
+                <span>Damage Resistances</span>
+                <span className="passive-value">{damageResistances.map(formatTraitLabel).join(', ')}</span>
+              </div>
+            )}
+            {damageImmunities.length > 0 && (
+              <div className="passive-item">
+                <span>Damage Immunities</span>
+                <span className="passive-value">{damageImmunities.map(formatTraitLabel).join(', ')}</span>
+              </div>
+            )}
+            {conditionResistances.length > 0 && (
+              <div className="passive-item">
+                <span>Condition Resistances</span>
+                <span className="passive-value">{conditionResistances.map(formatTraitLabel).join(', ')} (Adv. vs Save)</span>
+              </div>
+            )}
+            {conditionImmunities.length > 0 && (
+              <div className="passive-item">
+                <span>Condition Immunities</span>
+                <span className="passive-value">{conditionImmunities.map(formatTraitLabel).join(', ')}</span>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

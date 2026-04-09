@@ -33,6 +33,24 @@ const emptySourceMap = () => abilityOrder.reduce((acc, key) => ({ ...acc, [key]:
 
 const normalizeSpeedType = (value) => (value || '').toLowerCase();
 
+const normalizeTagValue = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9\s_-]+/g, '')
+  .replace(/[\s-]+/g, '_');
+
+const toNormalizedStringList = (...values) => {
+  const items = values.flatMap((value) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') return [value];
+    return [];
+  });
+
+  return Array.from(new Set(items
+    .map((item) => normalizeTagValue(item))
+    .filter(Boolean)));
+};
+
 const normalizeAbilityReference = (value) => {
   const key = String(value || '').trim().toLowerCase();
   if (!key) return null;
@@ -691,6 +709,73 @@ const benefitHandlers = {
   },
 
   /**
+   * damage_resistance: Grants resistance to one or more damage types
+   * Structure: { type: "damage_resistance", damage_types: ["fire", "cold"] }
+   */
+  damage_resistance: (benefit, baseCharacterData = {}, source) => {
+    const damageTypes = toNormalizedStringList(benefit.damage_types, benefit.damage_type, benefit.types);
+    if (damageTypes.length === 0) return [];
+
+    return damageTypes.map((damageType) => ({
+      target: `damage_resistance.${damageType}`,
+      value: 1,
+      type: 'category',
+      source
+    }));
+  },
+
+  /**
+   * damage_immunity: Grants immunity to one or more damage types
+   * Structure: { type: "damage_immunity", damage_types: ["poison"] }
+   */
+  damage_immunity: (benefit, baseCharacterData = {}, source) => {
+    const damageTypes = toNormalizedStringList(benefit.damage_types, benefit.damage_type, benefit.types);
+    if (damageTypes.length === 0) return [];
+
+    return damageTypes.map((damageType) => ({
+      target: `damage_immunity.${damageType}`,
+      value: 1,
+      type: 'category',
+      source
+    }));
+  },
+
+  /**
+   * condition_immunity: Grants immunity to one or more conditions
+   * Structure: { type: "condition_immunity", conditions: ["poisoned", "charmed"] }
+   */
+  condition_immunity: (benefit, baseCharacterData = {}, source) => {
+    const conditions = toNormalizedStringList(benefit.conditions, benefit.condition);
+    if (conditions.length === 0) return [];
+
+    return conditions.map((condition) => ({
+      target: `condition_immunity.${condition}`,
+      value: 1,
+      type: 'category',
+      source
+    }));
+  },
+
+  /**
+   * condition_resistance: Grants advantage on saves against one or more conditions
+   * Structure: { type: "condition_resistance", conditions: ["poisoned"], save_modifier?: "advantage" }
+   */
+  condition_resistance: (benefit, baseCharacterData = {}, source) => {
+    const conditions = toNormalizedStringList(benefit.conditions, benefit.condition);
+    if (conditions.length === 0) return [];
+
+    const saveModifier = normalizeTagValue(benefit.save_modifier || benefit.saveModifier || 'advantage');
+    if (saveModifier !== 'advantage') return [];
+
+    return conditions.map((condition) => ({
+      target: `condition_resistance.${condition}`,
+      value: 1,
+      type: 'category',
+      source
+    }));
+  },
+
+  /**
    * melee_weapon_attack_bonus: Adds a modifier bonus to melee weapon attack rolls
    * Structures:
    *   - { type: "melee_weapon_attack_bonus", bonus_source: "charisma_modifier" }
@@ -840,6 +925,10 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     saves: {},
     speeds: {},
     senses: {},
+    damageResistances: {},
+    damageImmunities: {},
+    conditionResistances: {},
+    conditionImmunities: {},
     advantages: {
       skills: {},
       saves: {}
@@ -857,6 +946,10 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     saves: {},
     speeds: {},
     senses: {},
+    damageResistances: {},
+    damageImmunities: {},
+    conditionResistances: {},
+    conditionImmunities: {},
     advantages: {
       skills: {},
       saves: {}
@@ -951,6 +1044,42 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
         totals.senses[senseType] = Math.max(totals.senses[senseType] || 0, bonus.value);
         sources.senses[senseType] = [...(sources.senses[senseType] || []), bonus];
       }
+      return;
+    }
+
+    if (bonus.target.startsWith('damage_resistance.')) {
+      const damageType = normalizeTagValue(bonus.target.replace('damage_resistance.', ''));
+      if (damageType) {
+        totals.damageResistances[damageType] = true;
+        sources.damageResistances[damageType] = [...(sources.damageResistances[damageType] || []), bonus];
+      }
+      return;
+    }
+
+    if (bonus.target.startsWith('damage_immunity.')) {
+      const damageType = normalizeTagValue(bonus.target.replace('damage_immunity.', ''));
+      if (damageType) {
+        totals.damageImmunities[damageType] = true;
+        sources.damageImmunities[damageType] = [...(sources.damageImmunities[damageType] || []), bonus];
+      }
+      return;
+    }
+
+    if (bonus.target.startsWith('condition_resistance.')) {
+      const conditionType = normalizeTagValue(bonus.target.replace('condition_resistance.', ''));
+      if (conditionType) {
+        totals.conditionResistances[conditionType] = true;
+        sources.conditionResistances[conditionType] = [...(sources.conditionResistances[conditionType] || []), bonus];
+      }
+      return;
+    }
+
+    if (bonus.target.startsWith('condition_immunity.')) {
+      const conditionType = normalizeTagValue(bonus.target.replace('condition_immunity.', ''));
+      if (conditionType) {
+        totals.conditionImmunities[conditionType] = true;
+        sources.conditionImmunities[conditionType] = [...(sources.conditionImmunities[conditionType] || []), bonus];
+      }
     }
   });
 
@@ -1023,6 +1152,10 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
 
   derived.senses = derivedSenses;
   derived.speeds = derivedSpeeds;
+  derived.damage_resistances = Object.keys(totals.damageResistances);
+  derived.damage_immunities = Object.keys(totals.damageImmunities);
+  derived.condition_resistances = Object.keys(totals.conditionResistances);
+  derived.condition_immunities = Object.keys(totals.conditionImmunities);
 
   return {
     derived,

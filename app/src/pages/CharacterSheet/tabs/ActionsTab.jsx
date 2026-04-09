@@ -30,6 +30,24 @@ function isSneakAttackFeatureName(name) {
   return String(name || '').toLowerCase().trim() === 'sneak attack';
 }
 
+// Helper to calculate Channel Divinity uses based on class and level
+function calculateChannelDivinityUses(className, level) {
+  const normalizedClass = String(className || '').toLowerCase().trim();
+  
+  if (normalizedClass === 'cleric') {
+    if (level === 1) return 0;
+    if (level >= 2 && level <= 5) return 2;
+    if (level >= 6 && level <= 17) return 3;
+    if (level >= 18 && level <= 20) return 4;
+  } else if (normalizedClass === 'paladin') {
+    if (level >= 1 && level <= 2) return 0;
+    if (level >= 3 && level <= 10) return 2;
+    if (level >= 11 && level <= 20) return 3;
+  }
+  
+  return 0;
+}
+
 // Helper to evaluate pool formulas like "level+wisdom" or "5*level"
 function evaluatePoolFormula(formula, level, abilityModifiers) {
   if (!formula || typeof formula !== 'string') return 0;
@@ -287,15 +305,24 @@ function getMagicItemActionFeatures(character, targetType) {
     itemBenefits.forEach((benefit, index) => {
       if (normalizeBenefitType(benefit?.type) !== targetType) return;
 
+      const benefitDescription = [
+        benefit?.description,
+        benefit?.effect,
+        benefit?.short,
+        benefit?.text,
+        magicItem?.description,
+        magicItem?.properties?.description,
+      ].find((value) => typeof value === 'string' && value.trim().length > 0) || '';
+
       const shortParts = [];
       if (benefit?.trigger) shortParts.push(`**Trigger:** ${benefit.trigger}`);
-      if (benefit?.description) shortParts.push(benefit.description);
-      if (!benefit?.description && benefit?.effect) shortParts.push(benefit.effect);
+      if (benefitDescription) shortParts.push(benefitDescription);
 
       features.push({
         id: `magic-item-${inventoryItem.id}-${targetType}-${index}`,
         name: benefit?.name || magicItem.name,
         short: shortParts.join('\n\n') || '',
+        description: benefitDescription,
         max_uses: benefit?.uses?.max ?? null,
         benefits: [benefit],
         source: {
@@ -383,7 +410,10 @@ function getScalingLevel(feature, character) {
 
 function resolveFeatureScaling(feature, scalingLevel) {
   const benefits = normalizeBenefits(feature?.benefits);
-  const featureDieBenefit = benefits.find((benefit) => benefit?.type === 'feature_die' && benefit?.level_scaling);
+  // Prefer explicit feature_die type, fall back to any benefit with level_scaling
+  const featureDieBenefit =
+    benefits.find((benefit) => benefit?.type === 'feature_die' && benefit?.level_scaling) ??
+    benefits.find((benefit) => benefit?.level_scaling);
 
   if (!featureDieBenefit) return '';
 
@@ -415,7 +445,7 @@ function resolveFeatureBenefitDescription(feature, character, proficiencyBonus =
   const normalizedPreferredType = preferredBenefitType ? normalizeBenefitType(preferredBenefitType) : null;
 
   const hasDescription = (benefit) => {
-    const description = benefit?.description ?? benefit?.effect;
+    const description = benefit?.description ?? benefit?.effect ?? benefit?.short ?? benefit?.text;
     return typeof description === 'string' && description.trim().length > 0;
   };
 
@@ -433,7 +463,13 @@ function resolveFeatureBenefitDescription(feature, character, proficiencyBonus =
     selectedBenefit = benefits.find((benefit) => hasDescription(benefit));
   }
 
-  const template = selectedBenefit?.description ?? selectedBenefit?.effect ?? feature?.description ?? '';
+  const template = selectedBenefit?.description
+    ?? selectedBenefit?.effect
+    ?? selectedBenefit?.short
+    ?? selectedBenefit?.text
+    ?? feature?.description
+    ?? feature?.short
+    ?? '';
   return resolveFeatureTextTemplate(template, feature, character, proficiencyBonus, derivedMods, preferredBenefitType);
 }
 
@@ -582,6 +618,7 @@ export default function ActionsTab({
   const [selectedSpell, setSelectedSpell] = useState(null);
   const [isSpellModalOpen, setIsSpellModalOpen] = useState(false);
   const [sneakModifierUses, setSneakModifierUses] = useState({});
+  const [channelDivinityUsesState, setChannelDivinityUsesState] = useState(0);
 
   // Find attuned items with sneak_die_modifier benefits
   const sneakDieModifierItems = useMemo(() => {
@@ -657,6 +694,17 @@ export default function ActionsTab({
         localStorage.setItem(`item_uses_${character.id}_${itemId}`, String(newUses));
       }
       window.dispatchEvent(new CustomEvent('itemUsesChanged', { detail: { itemId, newUses } }));
+    },
+    [character?.id]
+  );
+
+  const handleChannelDivinityUsesChange = useCallback(
+    (maxUses, requestedUses) => {
+      const newUses = Math.max(0, Math.min(maxUses, requestedUses));
+      setChannelDivinityUsesState(newUses);
+      if (character?.id) {
+        localStorage.setItem(`divinity_uses_${character.id}`, String(newUses));
+      }
     },
     [character?.id]
   );
@@ -1184,6 +1232,57 @@ export default function ActionsTab({
     return items;
   }, [character]);
 
+  // Build divinity list from features and magic items (for Clerics and Paladins)
+  const divinityFeatures = useMemo(() => {
+    const items = [];
+
+    if (character?.features && Array.isArray(character.features)) {
+      character.features.forEach((feature) => {
+        const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+        const divinityBenefits = benefits.filter((benefit) => normalizeBenefitType(benefit?.type) === 'divinity');
+
+        if (!divinityBenefits.length) return;
+
+        divinityBenefits.forEach((benefit, benefitIndex) => {
+          const prioritizedBenefits = [
+            benefit,
+            ...benefits.filter((_, idx) => idx !== benefitIndex)
+          ];
+
+          const divinityFeature = {
+            ...feature,
+            name: benefit?.name || feature?.name,
+            description: benefit?.description || benefit?.effect || feature?.description,
+            benefits: prioritizedBenefits,
+          };
+
+          items.push({
+            type: 'feature',
+            data: divinityFeature,
+            id: `feature-${feature.id || feature.name}-divinity-${benefitIndex}`
+          });
+        });
+      });
+    }
+
+    const magicItemDivinityFeatures = getMagicItemActionFeatures(character, 'divinity');
+    magicItemDivinityFeatures.forEach((feature) => {
+      items.push({
+        type: 'feature',
+        data: feature,
+        id: `feature-${feature.id || feature.name}`
+      });
+    });
+
+    items.sort((a, b) => {
+      const nameA = a.data?.name || '';
+      const nameB = b.data?.name || '';
+      return nameA.localeCompare(nameB);
+    });
+
+    return items;
+  }, [character]);
+
   // Calculate spell attack bonus and save DC (borrowed from SpellsTab logic)
   const spellAbilityMod = useMemo(() => {
     if (!character?.classes || !derivedMods) return 0;
@@ -1204,6 +1303,72 @@ export default function ActionsTab({
     if (!sneakAttackItem) return '';
     return resolveSneakDamageDisplay(sneakAttackItem.data, character, derivedMods, sneakDieOverride);
   }, [sneakFeatures, character, derivedMods, sneakDieOverride]);
+
+  const hasRogueClass = useMemo(() => {
+    const classEntries = Array.isArray(character?.classes) ? character.classes : [];
+    return classEntries.some((entry) => {
+      const className = (entry?.definition?.name || entry?.class || '').toLowerCase().trim();
+      return className === 'rogue';
+    });
+  }, [character?.classes]);
+
+  const hasClericOrPaladinClass = useMemo(() => {
+    const classEntries = Array.isArray(character?.classes) ? character.classes : [];
+    return classEntries.some((entry) => {
+      const className = (entry?.definition?.name || entry?.class || '').toLowerCase().trim();
+      return className === 'cleric' || className === 'paladin';
+    });
+  }, [character?.classes]);
+
+  // Get class name for channel divinity uses calculation
+  const clericOrPaladinClassName = useMemo(() => {
+    const classEntries = Array.isArray(character?.classes) ? character.classes : [];
+    for (const entry of classEntries) {
+      const className = (entry?.definition?.name || entry?.class || '').toLowerCase().trim();
+      if (className === 'cleric' || className === 'paladin') {
+        return className;
+      }
+    }
+    return null;
+  }, [character?.classes]);
+
+  // Calculate channel divinity max uses based on class and level
+  const channelDivinityUses = useMemo(() => {
+    if (!clericOrPaladinClassName) return 0;
+    const level = getCharacterLevel(character);
+    return calculateChannelDivinityUses(clericOrPaladinClassName, level);
+  }, [character, clericOrPaladinClassName]);
+
+  // Load channel divinity uses from localStorage on mount / character change
+  useEffect(() => {
+    if (!character?.id || !hasClericOrPaladinClass) return;
+    const stored = localStorage.getItem(`divinity_uses_${character.id}`);
+    setChannelDivinityUsesState(stored !== null ? parseInt(stored, 10) : 0);
+  }, [character?.id, hasClericOrPaladinClass, channelDivinityUses]);
+
+  // Stay in sync with long rest events for channel divinity
+  useEffect(() => {
+    const handleLongRest = (e) => {
+      if (e?.detail?.characterId && e.detail.characterId !== character?.id) return;
+      setChannelDivinityUsesState(channelDivinityUses);
+      if (character?.id) {
+        localStorage.setItem(`divinity_uses_${character.id}`, String(channelDivinityUses));
+      }
+    };
+    window.addEventListener('longRestPerformed', handleLongRest);
+    return () => {
+      window.removeEventListener('longRestPerformed', handleLongRest);
+    };
+  }, [character?.id, channelDivinityUses]);
+
+  useEffect(() => {
+    if (!hasRogueClass && activeSubtab === 'sneak') {
+      setActiveSubtab('actions');
+    }
+    if (!hasClericOrPaladinClass && activeSubtab === 'divinity') {
+      setActiveSubtab('actions');
+    }
+  }, [hasRogueClass, hasClericOrPaladinClass, activeSubtab]);
 
   return (
     <div className="actions-tab">
@@ -1228,12 +1393,22 @@ export default function ActionsTab({
         >
           Reactions
         </button>
-        <button
-          className={activeSubtab === 'sneak' ? 'subtab-btn sneak active' : 'subtab-btn sneak'}
-          onClick={() => setActiveSubtab('sneak')}
-        >
-          Sneak
-        </button>
+        {hasRogueClass && (
+          <button
+            className={activeSubtab === 'sneak' ? 'subtab-btn sneak active' : 'subtab-btn sneak'}
+            onClick={() => setActiveSubtab('sneak')}
+          >
+            Sneak
+          </button>
+        )}
+        {hasClericOrPaladinClass && (
+          <button
+            className={activeSubtab === 'divinity' ? 'subtab-btn divinity active' : 'subtab-btn divinity'}
+            onClick={() => setActiveSubtab('divinity')}
+          >
+            Channel Divinity
+          </button>
+        )}
       </div>
 
       <div className="feature-subtab-content">
@@ -1534,7 +1709,7 @@ export default function ActionsTab({
             )}
           </>
         )}
-        {activeSubtab === 'sneak' && (
+        {hasRogueClass && activeSubtab === 'sneak' && (
           <>
             {sneakDieModifierItems.length > 0 && (
               <div className="sneak-mettle-row">
@@ -1615,6 +1790,73 @@ export default function ActionsTab({
               </div>
             ) : (
               <p className="info-text">No sneak features available.</p>
+            )}
+          </>
+        )}
+        {hasClericOrPaladinClass && activeSubtab === 'divinity' && (
+          <>
+            <div className="divinity-subtab-header">
+              <span className="divinity-metric-text" title="Channel Divinity uses">
+                Channel Divinity Uses:
+              </span>
+              <div className="divinity-uses-boxes-gap" />
+              <span className="divinity-metric-text divinity-dc" title="Spell Save DC">
+                DC {spellSaveDC}
+              </span>
+              <div className="divinity-uses-boxes">
+                {Array.from({ length: Math.max(0, channelDivinityUses) }, (_, index) => {
+                  const boxUsed = index < channelDivinityUsesState;
+                  const nextUses = boxUsed && channelDivinityUsesState === index + 1 ? index : index + 1;
+                  return (
+                    <button
+                      key={`divinity-box-${index}`}
+                      className={`use-box${boxUsed ? ' used' : ''}`}
+                      onClick={() =>
+                        handleChannelDivinityUsesChange(
+                          channelDivinityUses,
+                          nextUses
+                        )
+                      }
+                      title={`Channel Divinity: ${index + 1}`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+            {divinityFeatures.length > 0 ? (
+              <div className="divinity-container">
+                {divinityFeatures.map((item) => {
+                  const feature = item.data;
+                  const featureId = item.id;
+                  const shortText = resolveFeatureShortText(feature, character, proficiencyBonus, derivedMods, 'divinity');
+                  const descriptionText = resolveFeatureBenefitDescription(feature, character, proficiencyBonus, derivedMods, 'divinity');
+
+                  return (
+                    <div key={item.id} className="divinity-feature">
+                      <div className="feature-header">
+                        <h4 className="feature-name">{feature.name}</h4>
+                      </div>
+
+                      {feature.max_uses && FeatureUsesTracker && (
+                        <FeatureUsesTracker
+                          maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character?.level, feature)}
+                          featureId={featureId}
+                          storedUses={usesState[featureId]}
+                          onUsesChange={onUsesChange}
+                        />
+                      )}
+
+                      {(shortText || descriptionText) && (
+                        <div className="divinity-feature-short">
+                          {renderSpellDescription(shortText || descriptionText)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="info-text">No channel divinity features available.</p>
             )}
           </>
         )}

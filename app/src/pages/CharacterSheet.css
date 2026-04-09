@@ -2026,6 +2026,130 @@ Last Updated: 2026-03-04
   font-weight: 600;
 }
 
+/* Channel Divinity Styling */
+.subtab-btn.divinity.active {
+  color: #ffd966;
+  background:
+    linear-gradient(rgba(60, 45, 20, 0.45), rgba(60, 45, 20, 0.45)),
+    linear-gradient(135deg, #d4af37 0%, #b8860b 100%);
+}
+
+.subtab-btn.divinity.active::after {
+  background: #ffb300;
+}
+
+.divinity-container {
+  position: relative;
+  background: linear-gradient(135deg, rgba(80, 60, 20, 0.8) 0%, rgba(60, 40, 10, 0.8) 100%);
+  border: 2px solid #d4af37;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 1px 2px rgba(255, 200, 100, 0.1);
+  overflow: hidden;
+}
+
+.divinity-subtab-header {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #ffd966;
+  font-family: 'Cinzel', 'Georgia', serif;
+  letter-spacing: 0.3px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.75);
+}
+
+.divinity-metric-text {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.divinity-metric-text.divinity-dc {
+  margin-left: auto;
+  opacity: 0.9;
+}
+
+.divinity-uses-boxes-gap {
+  flex: 1;
+}
+
+.divinity-uses-boxes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.divinity-uses-boxes .use-box {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(212, 175, 55, 0.75);
+  background: rgba(60, 40, 10, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+
+.divinity-uses-boxes .use-box:hover {
+  background: rgba(180, 140, 30, 0.3);
+  border-color: rgba(255, 200, 100, 0.95);
+}
+
+.divinity-uses-boxes .use-box.used {
+  background: #d4af37;
+  border-color: #b8860b;
+  box-shadow: inset 0 0 0 2px rgba(255, 230, 180, 0.95);
+}
+
+.divinity-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(40, 25, 5, 0.5);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.divinity-feature {
+  position: relative;
+  z-index: 1;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(150, 100, 200, 0.2);
+}
+
+.divinity-feature:last-child {
+  border-bottom: none;
+}
+
+.divinity-feature .feature-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.divinity-feature .feature-name {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #ffd966;
+  font-family: 'Cinzel', 'Georgia', serif;
+  letter-spacing: 0.3px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.divinity-feature .divinity-feature-short {
+  margin: 6px 0 0;
+  font-size: 0.9rem;
+  color: #ffc966;
+  line-height: 1.5;
+}
+
+.divinity-feature .divinity-feature-short .spell-special-text {
+  color: #f3e58c;
+  font-style: normal;
+  font-weight: 600;
+}
 
 /* Feature Groups */
 .feature-group {
