@@ -75,12 +75,15 @@ export default function SkillsTab({ character, proficiencyBonus, skills: charact
   const normalizeBenefits = (rawBenefits) => {
     if (Array.isArray(rawBenefits)) return rawBenefits;
     if (rawBenefits && typeof rawBenefits === 'object') {
+      if (Array.isArray(rawBenefits.benefits)) return rawBenefits.benefits;
       return rawBenefits.type ? [rawBenefits] : [];
     }
     if (typeof rawBenefits === 'string') {
       try {
         const parsed = JSON.parse(rawBenefits);
-        return Array.isArray(parsed) ? parsed : [];
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.benefits)) return parsed.benefits;
+        return parsed && typeof parsed === 'object' && parsed.type ? [parsed] : [];
       } catch {
         return [];
       }

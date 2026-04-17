@@ -420,11 +420,15 @@ const getCustomPockets = (items = []) => {
 
 const normalizeBenefitsInput = (benefits) => {
   if (Array.isArray(benefits)) return benefits;
+  if (benefits && typeof benefits === 'object' && Array.isArray(benefits.benefits)) {
+    return benefits.benefits;
+  }
   if (benefits && typeof benefits === 'object' && benefits.type) return [benefits];
   if (typeof benefits === 'string') {
     try {
       const parsed = JSON.parse(benefits);
       if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.benefits)) return parsed.benefits;
       if (parsed && typeof parsed === 'object' && parsed.type) return [parsed];
     } catch {
       return [];
@@ -1321,10 +1325,13 @@ function CharacterSheet() {
         return null;
       }
 
+      const staticBenefits = normalizeBenefitsInput(joinedFeat.benefits ?? featEntry.benefits ?? []);
+      const choiceBenefits = normalizeBenefitsInput(featEntry?.choices);
+
       return {
         id: featEntry.id || joinedFeat.id || featEntry.feat_id,
         name: joinedFeat.name || featEntry.name || 'Feat',
-        benefits: joinedFeat.benefits ?? featEntry.benefits ?? [],
+        benefits: [...staticBenefits, ...choiceBenefits],
         source: featEntry.source || null
       };
     })
@@ -2026,7 +2033,7 @@ function CharacterSheet() {
               proficiencyBonus={proficiencyBonus}
               skills={skills}
               loading={relatedLoading}
-              features={character.features || []}
+              features={featuresToProcess}
               derivedMods={derivedMods}
               skillAdvantages={derivedStats?.advantages?.skills || {}}
               statsTotals={statsTotals}
