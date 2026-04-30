@@ -1923,10 +1923,9 @@ export default function ActionsTab({
 
                 {/* Attack Rows */}
                 {actionsList.map(attack => {
-                  // Get damage type icon
-                  const getDamageIcon = () => {
-                    if (!attack.damageType) return null;
-                    return new URL(`../../../assets/icons/damage/${attack.damageType}.svg`, import.meta.url).href;
+                  const getDamageTypeIcon = (damageType) => {
+                    if (!damageType) return null;
+                    return new URL(`../../../assets/icons/damage/${damageType}.svg`, import.meta.url).href;
                   };
 
                   // Extract damage number and die (e.g., "1d4" -> {num: "1", die: "d4"})
@@ -1947,9 +1946,7 @@ export default function ActionsTab({
                   const hasDamage = Boolean(attack.damage);
                   const baseDamage = hasDamage ? parseDamage(attack.damage) : { num: '', die: null };
                   const versatileDamage = attack.versatileDamage ? parseDamage(attack.versatileDamage) : null;
-                  const extraDamageSuffix = Array.isArray(attack.extraDamageDice) && attack.extraDamageDice.length > 0
-                    ? ` + ${attack.extraDamageDice.map((entry) => `${entry.die}${entry.damageType ? ` ${entry.damageType}` : ''}`).join(' + ')}`
-                    : '';
+                  const extraDamageEntries = Array.isArray(attack.extraDamageDice) ? attack.extraDamageDice : [];
                   const baseNumValue = Number.parseInt(baseDamage.num, 10);
                   const flatDamageTotal = hasDamage && !baseDamage.die && Number.isFinite(baseNumValue)
                     ? baseNumValue + (attack.damageBonus || 0)
@@ -2036,20 +2033,36 @@ export default function ActionsTab({
                             ) : (
                               <span className="damage-none">—</span>
                             )}
-                            {hasDamage && extraDamageSuffix ? (
-                              <span className="damage-extra">{extraDamageSuffix}</span>
-                            ) : null}
                           </div>
                           {attack.versatile && attack.versatileDamage && versatileDamage && (
                             <div className="action-versatile" title={`Versatile: ${attack.versatileDamage}`}>
                               <span className="damage-num">{formatDamageStringWithBonus(versatileDamage, attack.versatileDamageBonus ?? attack.damageBonus)}</span>
                             </div>
                           )}
+                          {hasDamage && extraDamageEntries.length > 0 ? (
+                            <div className="damage-extra-row" aria-label="Extra damage">
+                              {extraDamageEntries.map((entry, index) => {
+                                const extraIcon = getDamageTypeIcon(entry?.damageType);
+                                return (
+                                  <div
+                                    key={`${attack.id}-extra-${entry?.die || 'die'}-${entry?.damageType || 'none'}-${index}`}
+                                    className="damage-extra-chip"
+                                    title={`${entry?.die || ''}${entry?.damageType ? ` ${entry.damageType}` : ''}`.trim()}
+                                  >
+                                    <span className="damage-extra-die">{entry?.die || ''}</span>
+                                    {extraIcon && (
+                                      <img src={extraIcon} alt="" className="damage-extra-icon" aria-hidden="true" />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                         </div>
 
-                        <div className={`action-col dmgtype-col${getDamageIcon() ? '' : ' no-dmgtype'}`}>
-                          {getDamageIcon() && (
-                            <img src={getDamageIcon()} alt={attack.damageType} title={attack.damageType} className="damage-icon" />
+                        <div className={`action-col dmgtype-col${getDamageTypeIcon(attack.damageType) ? '' : ' no-dmgtype'}`}>
+                          {getDamageTypeIcon(attack.damageType) && (
+                            <img src={getDamageTypeIcon(attack.damageType)} alt={attack.damageType} title={attack.damageType} className="damage-icon" />
                           )}
                         </div>
                       </div>

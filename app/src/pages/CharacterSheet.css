@@ -1494,6 +1494,40 @@ Last Updated: 2026-03-04
   text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.75);
 }
 
+.damage-extra-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.damage-extra-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(36, 26, 16, 0.5);
+  border: 1px solid rgba(228, 201, 150, 0.38);
+}
+
+.damage-extra-die {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #f3d68a;
+  font-family: 'Cinzel', 'Georgia', serif;
+  line-height: 1;
+}
+
+.damage-extra-icon {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  filter: brightness(0) invert(1) sepia(0.35) saturate(2) hue-rotate(-10deg) drop-shadow(1px 1px 2px rgba(0, 0, 0, 0.55));
+}
+
 /* Damage Type Icon */
 .action-damage-type {
   display: flex;
