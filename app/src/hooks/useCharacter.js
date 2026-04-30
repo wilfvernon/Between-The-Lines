@@ -215,20 +215,45 @@ const extractFeatureGrantedSpells = (features = [], classes = []) => {
 };
 
 const isMagicItemAttunementRequired = (magicItem) => {
-  const value = magicItem?.requires_attunement;
+  const value = magicItem?.requires_attunement ?? magicItem?.raw_data?.requires_attunement;
+  if (value === null || value === undefined || value === false) return false;
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === 'no' || normalized === 'none' || normalized === 'false') {
+      return false;
+    }
+  }
+
+  return Boolean(value);
+};
+
+const isMagicItemHidden = (magicItem) => {
+  const value = magicItem?.hidden ?? magicItem?.raw_data?.hidden;
   if (value === null || value === undefined) return false;
-  return String(value).trim().toLowerCase() !== 'no';
+  if (value === true) return true;
+  if (value === false) return false;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+  return Boolean(value);
+};
+
+const isActiveMagicInventoryItem = (inventoryItem) => {
+  const magicItem = inventoryItem?.magic_item;
+  if (!magicItem) return false;
+  if (isMagicItemHidden(magicItem)) return false;
+  if (inventoryItem?.equipped !== true) return false;
+  if (isMagicItemAttunementRequired(magicItem) && inventoryItem?.attuned !== true) return false;
+  return true;
 };
 
 const extractMagicItemGrantedSpells = (inventory = []) => {
   return (inventory || []).flatMap((inventoryItem) => {
     const magicItem = inventoryItem?.magic_item;
-    if (!magicItem) return [];
-
-    // If an item requires attunement, only grant spells while attuned.
-    if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) {
-      return [];
-    }
+    if (!isActiveMagicInventoryItem(inventoryItem)) return [];
 
     const sourceLabel = magicItem?.name || 'Magic Item';
     const itemBenefits = normalizeFeatureBenefitsInput(

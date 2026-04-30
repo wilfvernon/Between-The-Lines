@@ -63,14 +63,21 @@ const isMagicItemHidden = (magicItem) => {
   return Boolean(value);
 };
 
+const isActiveMagicInventoryItem = (inventoryItem) => {
+  const magicItem = inventoryItem?.magic_item;
+  if (!magicItem) return false;
+  if (isMagicItemHidden(magicItem)) return false;
+  if (inventoryItem?.equipped !== true) return false;
+  if (isMagicItemAttunementRequired(magicItem) && inventoryItem?.attuned !== true) return false;
+  return true;
+};
+
 const getMagicItemSpellcastingBonuses = (character) => {
   const inventory = Array.isArray(character?.inventory) ? character.inventory : [];
 
   return inventory.reduce((acc, inventoryItem) => {
     const magicItem = inventoryItem?.magic_item;
-    if (!magicItem) return acc;
-    if (isMagicItemHidden(magicItem)) return acc;
-    if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) return acc;
+    if (!isActiveMagicInventoryItem(inventoryItem)) return acc;
 
     const benefits = normalizeBenefitsInput(
       magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties

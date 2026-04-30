@@ -463,26 +463,42 @@ const benefitHandlers = {
 
   /**
    * hp_bonus: Adds to maximum HP
-   * Structure: { type: "hp_bonus", amount: number | "formula", formula?: "2*level" }
-   * Supports both flat amounts and formulas like "2*level", "level+constitution_modifier"
+   * Structure:
+   *  - { type: "hp_bonus", amount: 5 }
+   *  - { type: "hp_bonus", bonus_source: "constitution_modifier" }
+   *  - { type: "hp_bonus", formula: "level+constitution_modifier" }
+   *  - { type: "hp_bonus", amount: "formula", formula: "2*level" }
+   * Supports negative values for reductions.
    */
   hp_bonus: (benefit, baseCharacterData = {}, source) => {
-    if (!benefit.amount && benefit.amount !== 0) return [];
-    
-    let value;
-    if (benefit.amount === 'formula' && benefit.formula) {
-      // Evaluate formula with character context
+    const amountValue = benefit.amount ?? benefit.value ?? benefit.bonus;
+
+    let value = null;
+    if (typeof benefit.formula === 'string' && benefit.formula.trim()) {
       value = evaluateFormula(benefit.formula, baseCharacterData, source);
-    } else if (typeof benefit.amount === 'number') {
-      value = benefit.amount;
-    } else if (typeof benefit.amount === 'string' && !isNaN(benefit.amount)) {
-      value = parseInt(benefit.amount, 10);
-    } else {
-      return [];
+    } else if (amountValue === 'formula' && typeof benefit.formula === 'string' && benefit.formula.trim()) {
+      value = evaluateFormula(benefit.formula, baseCharacterData, source);
+    } else if (typeof benefit.bonus_source === 'string' && benefit.bonus_source.trim()) {
+      const sourceKey = benefit.bonus_source.trim().toLowerCase();
+      if (sourceKey === 'level') {
+        value = getScalingLevel(baseCharacterData, source);
+      } else {
+        value = resolveModifierValue(sourceKey, baseCharacterData);
+      }
+    } else if (typeof amountValue === 'number') {
+      value = amountValue;
+    } else if (typeof amountValue === 'string' && amountValue.trim()) {
+      const normalizedAmount = amountValue.trim().toLowerCase();
+      if (normalizedAmount === 'level') {
+        value = getScalingLevel(baseCharacterData, source);
+      } else if (!Number.isNaN(Number(normalizedAmount))) {
+        value = Number.parseInt(normalizedAmount, 10);
+      }
     }
-    
+
+    if (!Number.isFinite(value)) return [];
     if (value === 0) return [];
-    
+
     const bonus = {
       target: 'maxHP',
       value,
@@ -490,6 +506,11 @@ const benefitHandlers = {
       source
     };
     return [bonus];
+  },
+
+  // Alias for clearer naming in content definitions.
+  max_hp_bonus: (benefit, baseCharacterData = {}, source) => {
+    return benefitHandlers.hp_bonus(benefit, baseCharacterData, source);
   },
 
   /**

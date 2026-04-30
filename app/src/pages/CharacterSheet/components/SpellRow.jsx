@@ -4,6 +4,7 @@ import { parseCastingTime } from '../../../lib/spellUtils.jsx';
 // Import spell icons
 import ritualIcon from '../../../assets/icons/spell/ritual.svg';
 import meleeIcon from '../../../assets/icons/combat/melee.svg';
+import itemGrantedIcon from '../../../assets/icons/entity/magic-item.svg';
 
 // Import HP icons for healing effects
 import fullHPIcon from '../../../assets/icons/hp/full.svg';
@@ -163,6 +164,8 @@ export default function SpellRow({
   const alwaysPrepared = showAlwaysPrepared && castingSpellData.always_prepared;
   const isUpcast = showUpcast && castingSpellData.isUpcast;
   const isRitualOnly = showRitualOnly && !castingSpellData.is_prepared && !castingSpellData.always_prepared && !!castingSpellData.ritual_only;
+  const isItemGranted = !!castingSpellData.item_granted;
+  const itemGrantedSource = castingSpellData?.feat_source || 'Granted by item';
 
   return (
     <div 
@@ -186,6 +189,14 @@ export default function SpellRow({
               alt="Ritual"
               className="spell-ritual-badge"
               title="Ritual"
+            />
+          )}
+          {isItemGranted && (
+            <img
+              src={itemGrantedIcon}
+              alt="Item Granted"
+              className="spell-item-source-badge"
+              title={`Item Granted: ${itemGrantedSource}`}
             />
           )}
           {alwaysPrepared && <span className="spell-badge">Always Prepared</span>}

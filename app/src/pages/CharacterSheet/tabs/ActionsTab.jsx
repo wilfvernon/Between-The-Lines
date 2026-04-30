@@ -314,17 +314,22 @@ function isMagicItemHidden(magicItem) {
   return Boolean(value);
 }
 
+function isActiveMagicInventoryItem(inventoryItem) {
+  const magicItem = inventoryItem?.magic_item;
+  if (!magicItem) return false;
+  if (isMagicItemHidden(magicItem)) return false;
+  if (inventoryItem?.equipped !== true) return false;
+  if (isMagicItemAttunementRequired(magicItem) && inventoryItem?.attuned !== true) return false;
+  return true;
+}
+
 function getMagicItemActionFeatures(character, targetType) {
   const inventory = Array.isArray(character?.inventory) ? character.inventory : [];
   const features = [];
 
   inventory.forEach((inventoryItem) => {
     const magicItem = inventoryItem?.magic_item;
-    if (!magicItem) return;
-    if (isMagicItemHidden(magicItem)) return;
-
-    // If an item requires attunement, only expose its action benefits while attuned.
-    if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) return;
+    if (!isActiveMagicInventoryItem(inventoryItem)) return;
 
     const itemBenefits = normalizeBenefits(
       magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
@@ -717,13 +722,27 @@ function parseNumericBonus(value) {
   return 0;
 }
 
+function isTruthyFlag(value) {
+  if (value === true) return true;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+  }
+  return false;
+}
+
 function getMagicWeaponModifiers(inventoryItem) {
   const magicItem = inventoryItem?.magic_item;
   if (!magicItem) {
     return {
       attackBonus: 0,
       damageBonus: 0,
-      extraDamageDice: []
+      extraDamageDice: [],
+      baseDamageOverride: null,
+      damageTypeOverride: null,
+      versatileDamageOverride: null,
+      ignoreDamageModifier: false,
     };
   }
 
@@ -735,6 +754,10 @@ function getMagicWeaponModifiers(inventoryItem) {
   let damageBonus = 0;
   let hasExplicitEnhancement = false;
   const extraDamageDice = [];
+  let baseDamageOverride = null;
+  let damageTypeOverride = null;
+  let versatileDamageOverride = null;
+  let ignoreDamageModifier = false;
 
   const addExtraDamage = (benefit) => {
     const die = benefit?.die || benefit?.damage_dice || benefit?.dice;
@@ -749,6 +772,40 @@ function getMagicWeaponModifiers(inventoryItem) {
   benefits.forEach((benefit) => {
     const type = normalizeBenefitType(benefit?.type);
     const amount = parseNumericBonus(benefit?.amount ?? benefit?.value ?? benefit?.bonus);
+
+    if (['ignore_damage_mod', 'ignore_damage_modifier', 'no_ability_mod_damage', 'no_ability_modifier_damage'].includes(type)) {
+      ignoreDamageModifier = true;
+      return;
+    }
+
+    const applyDamageProfileOverride = () => {
+      const damageDice = benefit?.damage_dice_override ?? benefit?.damage_dice ?? benefit?.dice_override;
+      if (typeof damageDice === 'string' && damageDice.trim()) {
+        baseDamageOverride = damageDice.trim();
+      }
+
+      const versatileDice = benefit?.versatile_damage_dice_override
+        ?? benefit?.two_handed_damage_dice_override
+        ?? benefit?.versatile_damage_dice
+        ?? benefit?.two_handed_damage_dice;
+      if (typeof versatileDice === 'string' && versatileDice.trim()) {
+        versatileDamageOverride = versatileDice.trim();
+      }
+
+      const typeOverride = benefit?.damage_type_override ?? benefit?.damage_type ?? benefit?.damageType;
+      if (typeof typeOverride === 'string' && typeOverride.trim()) {
+        damageTypeOverride = typeOverride.trim().toLowerCase();
+      }
+
+      if (
+        isTruthyFlag(benefit?.ignore_damage_mod)
+        || isTruthyFlag(benefit?.ignore_damage_modifier)
+        || isTruthyFlag(benefit?.no_ability_mod_damage)
+        || isTruthyFlag(benefit?.no_ability_modifier_damage)
+      ) {
+        ignoreDamageModifier = true;
+      }
+    };
 
     if (type === 'melee_weapon_attack_bonus' || type === 'weapon_attack_bonus') {
       attackBonus += amount;
@@ -773,6 +830,12 @@ function getMagicWeaponModifiers(inventoryItem) {
         damageBonus += amount;
       }
       hasExplicitEnhancement = true;
+      applyDamageProfileOverride();
+      return;
+    }
+
+    if (['weapon_damage_override', 'damage_override', 'weapon_damage_profile'].includes(type)) {
+      applyDamageProfileOverride();
       return;
     }
 
@@ -793,10 +856,52 @@ function getMagicWeaponModifiers(inventoryItem) {
 
   const enhancementBonus = hasExplicitEnhancement ? 0 : inferredEnhancement;
 
+  const fallbackDamageDiceOverride =
+    magicItem?.damage_dice_override
+    ?? magicItem?.raw_data?.damage_dice_override
+    ?? magicItem?.properties?.damage_dice_override;
+  if (!baseDamageOverride && typeof fallbackDamageDiceOverride === 'string' && fallbackDamageDiceOverride.trim()) {
+    baseDamageOverride = fallbackDamageDiceOverride.trim();
+  }
+
+  const fallbackDamageTypeOverride =
+    magicItem?.damage_type_override
+    ?? magicItem?.raw_data?.damage_type_override
+    ?? magicItem?.properties?.damage_type_override;
+  if (!damageTypeOverride && typeof fallbackDamageTypeOverride === 'string' && fallbackDamageTypeOverride.trim()) {
+    damageTypeOverride = fallbackDamageTypeOverride.trim().toLowerCase();
+  }
+
+  const fallbackVersatileOverride =
+    magicItem?.versatile_damage_dice_override
+    ?? magicItem?.two_handed_damage_dice_override
+    ?? magicItem?.raw_data?.versatile_damage_dice_override
+    ?? magicItem?.raw_data?.two_handed_damage_dice_override
+    ?? magicItem?.properties?.versatile_damage_dice_override
+    ?? magicItem?.properties?.two_handed_damage_dice_override;
+  if (!versatileDamageOverride && typeof fallbackVersatileOverride === 'string' && fallbackVersatileOverride.trim()) {
+    versatileDamageOverride = fallbackVersatileOverride.trim();
+  }
+
+  if (
+    isTruthyFlag(magicItem?.ignore_damage_mod)
+    || isTruthyFlag(magicItem?.ignore_damage_modifier)
+    || isTruthyFlag(magicItem?.raw_data?.ignore_damage_mod)
+    || isTruthyFlag(magicItem?.raw_data?.ignore_damage_modifier)
+    || isTruthyFlag(magicItem?.properties?.ignore_damage_mod)
+    || isTruthyFlag(magicItem?.properties?.ignore_damage_modifier)
+  ) {
+    ignoreDamageModifier = true;
+  }
+
   return {
     attackBonus: attackBonus + enhancementBonus,
     damageBonus: damageBonus + enhancementBonus,
     extraDamageDice,
+    baseDamageOverride,
+    damageTypeOverride,
+    versatileDamageOverride,
+    ignoreDamageModifier,
   };
 }
 
@@ -805,9 +910,7 @@ function getMagicItemSpellcastingBonuses(character) {
 
   return inventory.reduce((acc, inventoryItem) => {
     const magicItem = inventoryItem?.magic_item;
-    if (!magicItem) return acc;
-    if (isMagicItemHidden(magicItem)) return acc;
-    if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) return acc;
+    if (!isActiveMagicInventoryItem(inventoryItem)) return acc;
 
     const benefits = normalizeBenefits(
       magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
@@ -933,9 +1036,7 @@ export default function ActionsTab({
     const result = [];
     inventory.forEach((inventoryItem) => {
       const magicItem = inventoryItem?.magic_item;
-      if (!magicItem) return;
-      if (isMagicItemHidden(magicItem)) return;
-      if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) return;
+      if (!isActiveMagicInventoryItem(inventoryItem)) return;
       const itemBenefits = normalizeBenefits(
         magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
       );
@@ -1102,16 +1203,17 @@ export default function ActionsTab({
 
         const toHit = abilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitOneHandBonus;
         const toHitTwoHand = abilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitTwoHandBonus;
-        const damageBonus = abilityMod + magicWeaponModifiers.damageBonus + meleeDamageOneHandBonus;
-        const versatileDamageBonus = abilityMod + magicWeaponModifiers.damageBonus + meleeDamageTwoHandBonus;
+        const abilityDamageBonus = magicWeaponModifiers.ignoreDamageModifier ? 0 : abilityMod;
+        const damageBonus = abilityDamageBonus + magicWeaponModifiers.damageBonus + meleeDamageOneHandBonus;
+        const versatileDamageBonus = abilityDamageBonus + magicWeaponModifiers.damageBonus + meleeDamageTwoHandBonus;
         
         // Get damage info
-        const damage = rawData?.damage?.damage_dice || '1';
-        const damageType = (rawData?.damage?.damage_type?.name || 'bludgeoning').toLowerCase();
+        const damage = magicWeaponModifiers.baseDamageOverride || rawData?.damage?.damage_dice || '1';
+        const damageType = (magicWeaponModifiers.damageTypeOverride || rawData?.damage?.damage_type?.name || 'bludgeoning').toLowerCase();
         
         // Versatile damage
         const hasVersatile = propertyNames.includes('Versatile');
-        const versatileDamage = rawData?.two_handed_damage?.damage_dice;
+        const versatileDamage = magicWeaponModifiers.versatileDamageOverride || rawData?.two_handed_damage?.damage_dice;
         const showSplitToHit = hasVersatile && meleeToHitOneHandBonus !== meleeToHitTwoHandBonus;
         
         // Mastery info
@@ -1238,11 +1340,7 @@ export default function ActionsTab({
     const inventory = Array.isArray(character?.inventory) ? character.inventory : [];
     inventory.forEach((inventoryItem) => {
       const magicItem = inventoryItem?.magic_item;
-      if (!magicItem) return;
-      if (isMagicItemHidden(magicItem)) return;
-
-      // If an item requires attunement, only expose its attack benefits while attuned
-      if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) return;
+      if (!isActiveMagicInventoryItem(inventoryItem)) return;
 
       const itemBenefits = normalizeBenefits(
         magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties

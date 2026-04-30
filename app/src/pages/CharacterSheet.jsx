@@ -106,6 +106,15 @@ const isMagicItemHidden = (magicItem) => {
   return Boolean(rawHidden);
 };
 
+const isActiveMagicInventoryItem = (inventoryItem) => {
+  const magicItem = inventoryItem?.magic_item;
+  if (!magicItem) return false;
+  if (isMagicItemHidden(magicItem)) return false;
+  if (inventoryItem?.equipped !== true) return false;
+  if (magicItemRequiresAttunement(magicItem) && inventoryItem?.attuned !== true) return false;
+  return true;
+};
+
 // Helper to get bonuses for a specific ability
 const getAbilityBonuses = (allBonuses = [], abilityName) => {
   const targetKey = `ability.${abilityName}`;
@@ -1778,16 +1787,11 @@ function CharacterSheet() {
   };
 
   // Extract active magic items from inventory for bonus processing.
-  // Items that do not require attunement are always active.
+  // Active means equipped, plus attuned if the item requires attunement.
   const activeMagicItems = (() => {
     if (!Array.isArray(character.inventory)) return [];
     return character.inventory
-      .filter((invItem) => {
-        if (!invItem?.magic_item) return false;
-        if (isMagicItemHidden(invItem.magic_item)) return false;
-        if (!magicItemRequiresAttunement(invItem.magic_item)) return true;
-        return invItem.attuned === true;
-      })
+      .filter((invItem) => isActiveMagicInventoryItem(invItem))
       .map(invItem => invItem.magic_item);
   })();
 
@@ -2696,6 +2700,101 @@ const getMagicItemPool = (magicItem, characterLevel, abilityModifiers) => {
   return getFeaturePool(magicItem, characterLevel, abilityModifiers);
 };
 
+const getMagicItemWeaponDisplayProfile = (inventoryItem, rawData = {}) => {
+  const magicItem = inventoryItem?.magic_item;
+
+  const profile = {
+    meleeDamageDice: rawData?.damage?.damage_dice || null,
+    meleeDamageType: rawData?.damage?.damage_type?.name || null,
+    versatileDamageDice: rawData?.two_handed_damage?.damage_dice || null,
+    versatileDamageType: rawData?.two_handed_damage?.damage_type?.name || null,
+  };
+
+  if (!magicItem) return profile;
+
+  const benefits = normalizeBenefitsInput(
+    magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
+  );
+
+  const applyOverride = (benefit) => {
+    const meleeDice = benefit?.damage_dice_override ?? benefit?.damage_dice ?? benefit?.dice_override;
+    if (typeof meleeDice === 'string' && meleeDice.trim()) {
+      profile.meleeDamageDice = meleeDice.trim();
+    }
+
+    const typeOverride = benefit?.damage_type_override ?? benefit?.damage_type ?? benefit?.damageType;
+    if (typeof typeOverride === 'string' && typeOverride.trim()) {
+      profile.meleeDamageType = typeOverride.trim();
+      if (!profile.versatileDamageType) {
+        profile.versatileDamageType = typeOverride.trim();
+      }
+    }
+
+    const versatileDice = benefit?.versatile_damage_dice_override
+      ?? benefit?.two_handed_damage_dice_override
+      ?? benefit?.versatile_damage_dice
+      ?? benefit?.two_handed_damage_dice;
+    if (typeof versatileDice === 'string' && versatileDice.trim()) {
+      profile.versatileDamageDice = versatileDice.trim();
+    }
+
+    const versatileType = benefit?.versatile_damage_type_override
+      ?? benefit?.two_handed_damage_type_override
+      ?? benefit?.versatile_damage_type
+      ?? benefit?.two_handed_damage_type;
+    if (typeof versatileType === 'string' && versatileType.trim()) {
+      profile.versatileDamageType = versatileType.trim();
+    }
+  };
+
+  benefits.forEach((benefit) => {
+    const type = normalizeBenefitType(benefit?.type);
+    if (['weapon_damage_override', 'damage_override', 'weapon_damage_profile', 'weapon_bonus', 'magic_weapon_bonus'].includes(type)) {
+      applyOverride(benefit);
+    }
+  });
+
+  const fallbackMeleeDice = magicItem?.damage_dice_override
+    ?? magicItem?.raw_data?.damage_dice_override
+    ?? magicItem?.properties?.damage_dice_override;
+  if (typeof fallbackMeleeDice === 'string' && fallbackMeleeDice.trim()) {
+    profile.meleeDamageDice = fallbackMeleeDice.trim();
+  }
+
+  const fallbackMeleeType = magicItem?.damage_type_override
+    ?? magicItem?.raw_data?.damage_type_override
+    ?? magicItem?.properties?.damage_type_override;
+  if (typeof fallbackMeleeType === 'string' && fallbackMeleeType.trim()) {
+    profile.meleeDamageType = fallbackMeleeType.trim();
+  }
+
+  const fallbackVersatileDice = magicItem?.versatile_damage_dice_override
+    ?? magicItem?.two_handed_damage_dice_override
+    ?? magicItem?.raw_data?.versatile_damage_dice_override
+    ?? magicItem?.raw_data?.two_handed_damage_dice_override
+    ?? magicItem?.properties?.versatile_damage_dice_override
+    ?? magicItem?.properties?.two_handed_damage_dice_override;
+  if (typeof fallbackVersatileDice === 'string' && fallbackVersatileDice.trim()) {
+    profile.versatileDamageDice = fallbackVersatileDice.trim();
+  }
+
+  const fallbackVersatileType = magicItem?.versatile_damage_type_override
+    ?? magicItem?.two_handed_damage_type_override
+    ?? magicItem?.raw_data?.versatile_damage_type_override
+    ?? magicItem?.raw_data?.two_handed_damage_type_override
+    ?? magicItem?.properties?.versatile_damage_type_override
+    ?? magicItem?.properties?.two_handed_damage_type_override;
+  if (typeof fallbackVersatileType === 'string' && fallbackVersatileType.trim()) {
+    profile.versatileDamageType = fallbackVersatileType.trim();
+  }
+
+  if (!profile.versatileDamageType) {
+    profile.versatileDamageType = profile.meleeDamageType;
+  }
+
+  return profile;
+};
+
 // Tab 4: Inventory
 function InventoryTab({ character, onInventoryUpdate, onSpellsUpdate, setSelectedItem, activePocket, setActivePocket }) {
   const [goldInput, setGoldInput] = useState(character?.gold ?? 0);
@@ -2848,12 +2947,36 @@ function InventoryTab({ character, onInventoryUpdate, onSpellsUpdate, setSelecte
     };
   }, [searchTerm]);
 
+  const isPotionMagicItem = (magicItem) => {
+    if (!magicItem) return false;
+
+    const fieldsToCheck = [
+      magicItem.name,
+      magicItem.type,
+      magicItem.category,
+      magicItem.item_type,
+      magicItem.raw_data?.name,
+      magicItem.raw_data?.type,
+      magicItem.raw_data?.category,
+      magicItem.raw_data?.item_type,
+      magicItem.raw_data?.equipment_category?.name,
+      magicItem.equipment?.type,
+      magicItem.equipment?.equipment_category?.name,
+    ];
+
+    return fieldsToCheck.some((value) => String(value || '').toLowerCase().includes('potion'));
+  };
+
   // Determine if an item is equippable
   const isEquippable = (item) => {
+    if (item?.magic_item) {
+      return !isPotionMagicItem(item.magic_item);
+    }
+
     const equipmentData = getInventoryEquipmentData(item);
     if (!equipmentData) return false;
     const type = equipmentData.type?.toLowerCase() || '';
-    return type.includes('weapon') || type.includes('armor');
+    return type.includes('weapon') || type.includes('armor') || type.includes('shield');
   };
 
   // Determine if an item requires attunement
@@ -2966,6 +3089,10 @@ function InventoryTab({ character, onInventoryUpdate, onSpellsUpdate, setSelecte
       // Refetch inventory to update display
       if (onInventoryUpdate) {
         await onInventoryUpdate();
+      }
+      // Rebuild granted spells so equip-gated item spells update immediately.
+      if (onSpellsUpdate) {
+        await onSpellsUpdate();
       }
     } catch (err) {
       console.error('Error toggling equipment:', err);
@@ -3456,6 +3583,7 @@ function ItemModal({
     return text;
   })();
   const isWeapon = isEquipmentLike && linkedEquipment.type?.toLowerCase().includes('weapon');
+  const weaponDisplayProfile = isWeapon ? getMagicItemWeaponDisplayProfile(item, rawData) : null;
   const hasTrinketDescriptionChanges = isTrinket && (trinketDescription !== (item?.notes || ''));
 
   const saveTrinketDescription = async () => {
@@ -3607,17 +3735,17 @@ function ItemModal({
                   );
                 })()}
                 
-                {rawData.damage && (
+                {weaponDisplayProfile?.meleeDamageDice && (
                   <div className="item-row">
                     <span className="item-label">Melee Damage:</span>
-                    <span>{rawData.damage.damage_dice} {rawData.damage.damage_type?.name || ''}</span>
+                    <span>{weaponDisplayProfile.meleeDamageDice} {weaponDisplayProfile.meleeDamageType || ''}</span>
                   </div>
                 )}
                 
-                {rawData.two_handed_damage && (
+                {weaponDisplayProfile?.versatileDamageDice && (
                   <div className="item-row">
                     <span className="item-label">Two-Handed:</span>
-                    <span>{rawData.two_handed_damage.damage_dice} {rawData.two_handed_damage.damage_type?.name || ''}</span>
+                    <span>{weaponDisplayProfile.versatileDamageDice} {weaponDisplayProfile.versatileDamageType || ''}</span>
                   </div>
                 )}
                 

@@ -165,6 +165,58 @@ describe('bonusEngine', () => {
 
       expect(bonuses).toEqual([]);
     });
+
+    it('should collect max_hp_bonus from level using bonus_source', () => {
+      const features = [
+        {
+          id: 'feat-hp-1',
+          name: 'Hardy Frame',
+          benefits: {
+            type: 'max_hp_bonus',
+            bonus_source: 'level'
+          }
+        }
+      ];
+
+      const bonuses = collectBonuses({
+        items: [],
+        features,
+        baseCharacterData: { level: 7 },
+        overrides: []
+      });
+
+      expect(bonuses.length).toBe(1);
+      expect(bonuses[0]).toMatchObject({
+        target: 'maxHP',
+        value: 7
+      });
+    });
+
+    it('should support negative hp bonus formulas', () => {
+      const features = [
+        {
+          id: 'feat-hp-2',
+          name: 'Life Tax',
+          benefits: {
+            type: 'hp_bonus',
+            formula: '-level'
+          }
+        }
+      ];
+
+      const bonuses = collectBonuses({
+        items: [],
+        features,
+        baseCharacterData: { level: 5 },
+        overrides: []
+      });
+
+      expect(bonuses.length).toBe(1);
+      expect(bonuses[0]).toMatchObject({
+        target: 'maxHP',
+        value: -5
+      });
+    });
   });
 
   describe('deriveCharacterStats', () => {

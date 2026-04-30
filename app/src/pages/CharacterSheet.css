@@ -4009,6 +4009,23 @@ Last Updated: 2026-03-04
   filter: brightness(0) saturate(100%) invert(75%) sepia(35%) saturate(200%) hue-rotate(360deg) brightness(105%) contrast(95%);
 }
 
+.spell-item-source-badge {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  flex-shrink: 0;
+  opacity: 0.95;
+  filter: brightness(0) saturate(100%) invert(73%) sepia(31%) saturate(257%) hue-rotate(8deg) brightness(95%) contrast(87%);
+}
+
+.bonus-action-spell .spell-item-source-badge {
+  filter: brightness(0) saturate(100%) invert(88%) sepia(20%) saturate(318%) hue-rotate(226deg) brightness(98%) contrast(91%);
+}
+
+.reaction-spell .spell-item-source-badge {
+  filter: brightness(0) saturate(100%) invert(86%) sepia(10%) saturate(427%) hue-rotate(172deg) brightness(96%) contrast(89%);
+}
+
 .spell-components {
   display: flex;
   gap: 4px;
