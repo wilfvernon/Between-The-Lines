@@ -154,6 +154,34 @@ function resolveFeatureTextTemplate(templateText, feature, character, proficienc
     }
   });
 
+  const abilityAliasMap = {
+    str: 'strength',
+    strength: 'strength',
+    dex: 'dexterity',
+    dexterity: 'dexterity',
+    con: 'constitution',
+    constitution: 'constitution',
+    int: 'intelligence',
+    intelligence: 'intelligence',
+    wis: 'wisdom',
+    wisdom: 'wisdom',
+    cha: 'charisma',
+    charisma: 'charisma',
+  };
+
+  const computeSaveDC = (abilityKey = 'constitution') => {
+    const normalizedAbility = abilityAliasMap[String(abilityKey || '').toLowerCase().trim()] || 'constitution';
+    const mod = Number(modifierMap?.[normalizedAbility]) || 0;
+    const pb = Number(proficiencyBonus) || 0;
+    return 8 + pb + mod;
+  };
+
+  result = result.replace(/\$\{dc:([a-z_]+)\}/gi, (_, abilityToken) => String(computeSaveDC(abilityToken)));
+  result = result.replaceAll('${dc}', String(computeSaveDC('constitution')));
+  ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'].forEach((ability) => {
+    result = result.replaceAll(`\${dc_${ability}}`, String(computeSaveDC(ability)));
+  });
+
   const benefits = normalizeBenefits(feature?.benefits);
   const normalizedPreferredType = preferredBenefitType ? normalizeBenefitType(preferredBenefitType) : null;
 
@@ -412,13 +440,13 @@ function resolveFeatureScaling(feature, scalingLevel) {
   const benefits = normalizeBenefits(feature?.benefits);
   // Prefer explicit feature_die type, fall back to any benefit with level_scaling
   const featureDieBenefit =
-    benefits.find((benefit) => benefit?.type === 'feature_die' && benefit?.level_scaling) ??
-    benefits.find((benefit) => benefit?.level_scaling);
+    benefits.find((benefit) => benefit?.type === 'feature_die' && (benefit?.level_scaling || benefit?.scaling)) ??
+    benefits.find((benefit) => benefit?.level_scaling || benefit?.scaling);
 
   if (!featureDieBenefit) return '';
 
   const baseDie = typeof featureDieBenefit.die === 'string' ? featureDieBenefit.die : '';
-  const scaling = featureDieBenefit.level_scaling;
+  const scaling = featureDieBenefit.level_scaling || featureDieBenefit.scaling;
   if (!scaling || typeof scaling !== 'object') return baseDie;
 
   const thresholds = Object.entries(scaling)
@@ -434,6 +462,64 @@ function resolveFeatureScaling(feature, scalingLevel) {
   });
 
   return resolved;
+}
+
+function getFeatureDieBenefit(feature) {
+  const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+  return benefits.find((benefit) => normalizeBenefitType(benefit?.type) === 'feature_die') || null;
+}
+
+function resolveFeatureDieDisplay(feature, character, proficiencyBonus = 0, derivedMods = null) {
+  const featureDieBenefit = getFeatureDieBenefit(feature);
+  const scalingLevel = getScalingLevel(feature, character);
+  const scaledDie = resolveFeatureScaling(feature, scalingLevel);
+  const baseDie = typeof featureDieBenefit?.die === 'string' ? featureDieBenefit.die : '';
+
+  return scaledDie
+    || baseDie
+    || resolveFeatureTextTemplate('${die}', feature, character, proficiencyBonus, derivedMods, 'feature_die')
+    || '';
+}
+
+function resolveLimitGauge(feature, characterLevel, abilityModifiers, effectiveMaxHP = 0) {
+  const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+  const gaugeBenefit = benefits.find((benefit) => normalizeBenefitType(benefit?.type) === 'gauge');
+  if (!gaugeBenefit) return null;
+
+  const thresholdRaw = gaugeBenefit?.threshold ?? gaugeBenefit?.trigger ?? 'half_hp_max';
+  let threshold = 0;
+
+  if (typeof thresholdRaw === 'number') {
+    threshold = Math.max(1, Math.floor(thresholdRaw));
+  } else {
+    const token = String(thresholdRaw || '').toLowerCase().trim();
+    if (['half_hp_max', 'half_max_hp', 'hp_max_half', 'half_hp'].includes(token)) {
+      threshold = Math.max(1, Math.ceil((Number(effectiveMaxHP) || 0) / 2));
+    } else {
+      const numeric = Number(token);
+      threshold = Number.isFinite(numeric) ? Math.max(1, Math.floor(numeric)) : 0;
+    }
+  }
+
+  if (!threshold) return null;
+
+  return {
+    name: gaugeBenefit?.name || feature?.name || 'Limit Gauge',
+    threshold,
+    maxCharges: 1,
+  };
+}
+
+function normalizeLimitGaugeSnapshot(snapshot, gaugeConfig) {
+  const threshold = Math.max(1, Number(gaugeConfig?.threshold) || 1);
+  if (!snapshot || typeof snapshot !== 'object') {
+    return { value: 0, charges: 0, lastProgressAt: Date.now() };
+  }
+  return {
+    value: Math.max(0, Math.min(threshold, Math.floor(Number(snapshot.value) || 0))),
+    charges: Math.max(0, Math.min(1, Math.floor(Number(snapshot.charges) || 0))),
+    lastProgressAt: Number.isFinite(Number(snapshot.lastProgressAt)) ? Number(snapshot.lastProgressAt) : Date.now(),
+  };
 }
 
 function resolveFeatureShortText(feature, character, proficiencyBonus = 0, derivedMods = null, preferredBenefitType = null) {
@@ -530,9 +616,58 @@ function resolveSneakDamageDisplay(feature, character, derivedMods = null, dieOv
 // Helper function for weapon proficiency
 function isWeaponProficient(weapon, character) {
   if (!weapon || !character) return false;
+
+  const normalizeToken = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/\+\d+/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const additionalWeaponTokens = (() => {
+    const raw = character?.weapons;
+    if (!raw) return [];
+
+    const values = Array.isArray(raw)
+      ? raw
+      : typeof raw === 'string'
+        ? raw.split(/[;,]/)
+        : [];
+
+    return values
+      .flatMap((entry) => {
+        if (typeof entry === 'string') return [entry];
+        if (entry && typeof entry === 'object') {
+          return [entry.name, entry.weapon, entry.index].filter(Boolean);
+        }
+        return [];
+      })
+      .map(normalizeToken)
+      .filter(Boolean);
+  })();
   
   const weaponType = weapon.type || '';
   const isMartial = weaponType.includes('Martial');
+  const isSimple = !isMartial;
+
+  const weaponName = normalizeToken(
+    weapon.name
+      || weapon.raw_data?.name
+      || weapon.raw_data?.index
+      || ''
+  );
+
+  if (additionalWeaponTokens.some((token) => token === weaponName)) {
+    return true;
+  }
+
+  if (isMartial && additionalWeaponTokens.some((token) => ['martial weapon', 'martial weapons'].includes(token))) {
+    return true;
+  }
+
+  if (isSimple && additionalWeaponTokens.some((token) => ['simple weapon', 'simple weapons'].includes(token))) {
+    return true;
+  }
   
   // Everyone is proficient with Simple weapons
   if (!isMartial) return true;
@@ -573,6 +708,158 @@ function getInventoryWeaponData(item) {
   return item.equipment || item.magic_item?.equipment || item.magic_item || null;
 }
 
+function parseNumericBonus(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const match = value.trim().match(/^([+-]?\d+)$/);
+    if (match) return Number.parseInt(match[1], 10);
+  }
+  return 0;
+}
+
+function getMagicWeaponModifiers(inventoryItem) {
+  const magicItem = inventoryItem?.magic_item;
+  if (!magicItem) {
+    return {
+      attackBonus: 0,
+      damageBonus: 0,
+      extraDamageDice: []
+    };
+  }
+
+  const benefits = normalizeBenefits(
+    magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
+  );
+
+  let attackBonus = 0;
+  let damageBonus = 0;
+  let hasExplicitEnhancement = false;
+  const extraDamageDice = [];
+
+  const addExtraDamage = (benefit) => {
+    const die = benefit?.die || benefit?.damage_dice || benefit?.dice;
+    if (typeof die !== 'string' || !die.trim()) return;
+    const damageType = benefit?.damage_type || benefit?.damageType || benefit?.type_name || null;
+    extraDamageDice.push({
+      die: die.trim(),
+      damageType: typeof damageType === 'string' ? damageType.trim().toLowerCase() : null
+    });
+  };
+
+  benefits.forEach((benefit) => {
+    const type = normalizeBenefitType(benefit?.type);
+    const amount = parseNumericBonus(benefit?.amount ?? benefit?.value ?? benefit?.bonus);
+
+    if (type === 'melee_weapon_attack_bonus' || type === 'weapon_attack_bonus') {
+      attackBonus += amount;
+      hasExplicitEnhancement = true;
+      return;
+    }
+
+    if (type === 'melee_weapon_damage_bonus' || type === 'weapon_damage_bonus') {
+      damageBonus += amount;
+      hasExplicitEnhancement = true;
+      return;
+    }
+
+    if (type === 'weapon_bonus' || type === 'magic_weapon_bonus') {
+      const appliesTo = normalizeBenefitType(benefit?.applies_to || benefit?.appliesTo || benefit?.target || 'attack_and_damage');
+      if (['attack', 'attack_roll', 'to_hit', 'melee_weapon_attack', 'weapon_attack'].includes(appliesTo)) {
+        attackBonus += amount;
+      } else if (['damage', 'damage_roll', 'melee_weapon_damage', 'weapon_damage'].includes(appliesTo)) {
+        damageBonus += amount;
+      } else {
+        attackBonus += amount;
+        damageBonus += amount;
+      }
+      hasExplicitEnhancement = true;
+      return;
+    }
+
+    if (['extra_damage_dice', 'weapon_extra_damage', 'bonus_damage_dice'].includes(type)) {
+      addExtraDamage(benefit);
+    }
+  });
+
+  // Backward compatibility: infer enhancement from common legacy fields or item naming.
+  const explicitBonus = parseNumericBonus(
+    magicItem?.bonus
+    ?? magicItem?.raw_data?.bonus
+    ?? magicItem?.properties?.bonus
+  );
+  const nameBonusMatch = String(magicItem?.name || '').match(/\+\s*(\d+)/);
+  const inferredNameBonus = nameBonusMatch ? Number.parseInt(nameBonusMatch[1], 10) : 0;
+  const inferredEnhancement = Math.max(explicitBonus, inferredNameBonus, 0);
+
+  const enhancementBonus = hasExplicitEnhancement ? 0 : inferredEnhancement;
+
+  return {
+    attackBonus: attackBonus + enhancementBonus,
+    damageBonus: damageBonus + enhancementBonus,
+    extraDamageDice,
+  };
+}
+
+function getMagicItemSpellcastingBonuses(character) {
+  const inventory = Array.isArray(character?.inventory) ? character.inventory : [];
+
+  return inventory.reduce((acc, inventoryItem) => {
+    const magicItem = inventoryItem?.magic_item;
+    if (!magicItem) return acc;
+    if (isMagicItemHidden(magicItem)) return acc;
+    if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) return acc;
+
+    const benefits = normalizeBenefits(
+      magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
+    );
+
+    benefits.forEach((benefit) => {
+      const type = normalizeBenefitType(benefit?.type);
+      const amount = parseNumericBonus(benefit?.amount ?? benefit?.value ?? benefit?.bonus);
+      if (!amount) return;
+
+      if (type === 'spell_attack_bonus') {
+        acc.attackBonus += amount;
+        return;
+      }
+
+      if (type === 'spell_save_dc_bonus' || type === 'spell_dc_bonus') {
+        acc.saveDCBonus += amount;
+        return;
+      }
+
+      if (type === 'spellcasting_bonus' || type === 'spell_bonus') {
+        const appliesTo = normalizeBenefitType(benefit?.applies_to || benefit?.appliesTo || 'attack_and_dc');
+        if (['attack', 'to_hit', 'spell_attack', 'spell_attack_bonus'].includes(appliesTo)) {
+          acc.attackBonus += amount;
+        } else if (['dc', 'save_dc', 'spell_dc', 'spell_save_dc', 'spell_save_dc_bonus'].includes(appliesTo)) {
+          acc.saveDCBonus += amount;
+        } else {
+          acc.attackBonus += amount;
+          acc.saveDCBonus += amount;
+        }
+      }
+    });
+
+    const fallbackAttack = parseNumericBonus(
+      magicItem?.spell_attack_bonus ?? magicItem?.raw_data?.spell_attack_bonus ?? magicItem?.properties?.spell_attack_bonus
+    );
+    const fallbackDC = parseNumericBonus(
+      magicItem?.spell_save_dc_bonus
+      ?? magicItem?.spell_dc_bonus
+      ?? magicItem?.raw_data?.spell_save_dc_bonus
+      ?? magicItem?.raw_data?.spell_dc_bonus
+      ?? magicItem?.properties?.spell_save_dc_bonus
+      ?? magicItem?.properties?.spell_dc_bonus
+    );
+
+    acc.attackBonus += fallbackAttack;
+    acc.saveDCBonus += fallbackDC;
+
+    return acc;
+  }, { attackBonus: 0, saveDCBonus: 0 });
+}
+
 function normalizePropertyName(value) {
   return String(value || '')
     .trim()
@@ -607,6 +894,9 @@ export default function ActionsTab({
   allBonuses = [],
   setSelectedItem,
   usesState = {},
+  poolState = {},
+  onPoolChange = () => {},
+  effectiveMaxHP = 0,
   onUsesChange = () => {},
   calculateMaxUses = () => 0,
   abilityModifiers = {},
@@ -619,6 +909,23 @@ export default function ActionsTab({
   const [isSpellModalOpen, setIsSpellModalOpen] = useState(false);
   const [sneakModifierUses, setSneakModifierUses] = useState({});
   const [channelDivinityUsesState, setChannelDivinityUsesState] = useState(0);
+  const [limitGaugeDraftValues, setLimitGaugeDraftValues] = useState({});
+  const characterLevel = useMemo(() => getCharacterLevel(character), [character]);
+
+  const commitLimitGaugeDraftValue = useCallback((gaugeStateId, gaugeConfig, gaugeState, draftValue) => {
+    const parsed = draftValue === '' ? 0 : Number.parseInt(draftValue, 10);
+    const nextValue = Number.isNaN(parsed) ? 0 : parsed;
+    onPoolChange(gaugeStateId, normalizeLimitGaugeSnapshot({
+      ...gaugeState,
+      value: nextValue,
+      lastProgressAt: Date.now(),
+    }, gaugeConfig));
+    setLimitGaugeDraftValues((prev) => {
+      const next = { ...prev };
+      delete next[gaugeStateId];
+      return next;
+    });
+  }, [onPoolChange]);
 
   // Find attuned items with sneak_die_modifier benefits
   const sneakDieModifierItems = useMemo(() => {
@@ -785,10 +1092,7 @@ export default function ActionsTab({
         // Check weapon proficiency
         const isProficient = isWeaponProficient(weapon, character);
         const profBonus = isProficient ? (proficiencyBonus || 0) : 0;
-        
-        // Magic bonus from item name (+1, +2, etc.)
-        const magicMatch = weapon.name?.match(/\+(\d+)/);
-        const magicBonus = magicMatch ? parseInt(magicMatch[1], 10) : 0;
+        const magicWeaponModifiers = getMagicWeaponModifiers(item);
         
         // Calculate to-hit and damage bonuses
         const meleeToHitOneHandBonus = getConditionalMeleeBonus('melee_weapon_attack', { properties: propertyNames, versatile: propertyNames.includes('Versatile'), isRanged }, 1);
@@ -796,10 +1100,10 @@ export default function ActionsTab({
         const meleeDamageOneHandBonus = getConditionalMeleeBonus('melee_weapon_damage', { properties: propertyNames, versatile: propertyNames.includes('Versatile'), isRanged }, 1);
         const meleeDamageTwoHandBonus = getConditionalMeleeBonus('melee_weapon_damage', { properties: propertyNames, versatile: propertyNames.includes('Versatile'), isRanged }, 2);
 
-        const toHit = abilityMod + profBonus + magicBonus + meleeToHitOneHandBonus;
-        const toHitTwoHand = abilityMod + profBonus + magicBonus + meleeToHitTwoHandBonus;
-        const damageBonus = abilityMod + magicBonus + meleeDamageOneHandBonus;
-        const versatileDamageBonus = abilityMod + magicBonus + meleeDamageTwoHandBonus;
+        const toHit = abilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitOneHandBonus;
+        const toHitTwoHand = abilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitTwoHandBonus;
+        const damageBonus = abilityMod + magicWeaponModifiers.damageBonus + meleeDamageOneHandBonus;
+        const versatileDamageBonus = abilityMod + magicWeaponModifiers.damageBonus + meleeDamageTwoHandBonus;
         
         // Get damage info
         const damage = rawData?.damage?.damage_dice || '1';
@@ -833,7 +1137,8 @@ export default function ActionsTab({
           versatile: hasVersatile,
           versatileDamage,
           isProficient,
-          magicBonus,
+          magicBonus: magicWeaponModifiers.attackBonus,
+          extraDamageDice: magicWeaponModifiers.extraDamageDice,
           isRanged,
           masteryName,
           hasMastery
@@ -1295,14 +1600,128 @@ export default function ActionsTab({
     return derivedMods.intelligence || 0; // Default to INT (Wizard, Artificer)
   }, [character?.classes, derivedMods]);
 
-  const spellAttackBonus = (proficiencyBonus || 0) + spellAbilityMod;
-  const spellSaveDC = 8 + (proficiencyBonus || 0) + spellAbilityMod;
+  const spellcastingItemBonuses = useMemo(() => getMagicItemSpellcastingBonuses(character), [character?.inventory]);
+
+  const spellAttackBonus = (proficiencyBonus || 0) + spellAbilityMod + (spellcastingItemBonuses.attackBonus || 0);
+  const spellSaveDC = 8 + (proficiencyBonus || 0) + spellAbilityMod + (spellcastingItemBonuses.saveDCBonus || 0);
   const cunningStrikeDC = 8 + (proficiencyBonus || 0) + (derivedMods?.dexterity || 0);
   const sneakAttackDamage = useMemo(() => {
     const sneakAttackItem = sneakFeatures.find((item) => isSneakAttackFeatureName(item?.data?.name));
     if (!sneakAttackItem) return '';
     return resolveSneakDamageDisplay(sneakAttackItem.data, character, derivedMods, sneakDieOverride);
   }, [sneakFeatures, character, derivedMods, sneakDieOverride]);
+
+  const limitFeatures = useMemo(() => {
+    const items = [];
+
+    if (character?.features && Array.isArray(character.features)) {
+      character.features.forEach((feature, featureIndex) => {
+        const sourceFeatureId = feature?.id || `feature-${feature?.name || featureIndex}`;
+        const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+        const limitBenefits = benefits.filter((benefit) => normalizeBenefitType(benefit?.type) === 'limit');
+
+        if (!limitBenefits.length) return;
+
+        limitBenefits.forEach((benefit, benefitIndex) => {
+          const prioritizedBenefits = [
+            benefit,
+            ...benefits.filter((_, idx) => idx !== benefitIndex)
+          ];
+
+          const limitFeature = {
+            ...feature,
+            name: benefit?.name || feature?.name,
+            description: benefit?.description || benefit?.effect || feature?.description,
+            benefits: prioritizedBenefits,
+            __sourceFeatureId: sourceFeatureId,
+          };
+
+          items.push({
+            type: 'feature',
+            data: limitFeature,
+            id: `feature-${feature.id || feature.name}-limit-${benefitIndex}`
+          });
+        });
+      });
+    }
+
+    const magicItemLimitFeatures = getMagicItemActionFeatures(character, 'limit');
+    magicItemLimitFeatures.forEach((feature) => {
+      items.push({
+        type: 'feature',
+        data: feature,
+        id: `feature-${feature.id || feature.name}`
+      });
+    });
+
+    items.sort((a, b) => {
+      const nameA = a.data?.name || '';
+      const nameB = b.data?.name || '';
+      return nameA.localeCompare(nameB);
+    });
+
+    return items;
+  }, [character]);
+
+  const soldierLimitResourceFeatures = useMemo(() => {
+    const featureEntries = Array.isArray(character?.features) ? character.features : [];
+
+    const isLimitNamed = (value) => String(value || '').toLowerCase().includes('limit');
+
+    return featureEntries.filter((feature) => {
+      const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+      if (!benefits.length) return false;
+
+      const hasRelevantBenefit = benefits.some((benefit) => {
+        const type = normalizeBenefitType(benefit?.type);
+        return type === 'limit' || type === 'feature_die' || type === 'gauge';
+      });
+
+      if (!hasRelevantBenefit) return false;
+
+      const sourceInfo = normalizeFeatureSource(feature?.source);
+      const sourceType = String(sourceInfo?.source || '').toLowerCase().trim();
+      const sourceClass = String(sourceInfo?.class || '').toLowerCase().trim();
+      const sourceSubclass = String(sourceInfo?.subclass || '').toLowerCase().trim();
+
+      if (sourceSubclass.includes('soldier')) return true;
+      if (sourceType === 'subclass' && (!sourceClass || sourceClass === 'fighter')) return true;
+
+      if (isLimitNamed(feature?.name)) return true;
+      return benefits.some((benefit) => isLimitNamed(benefit?.name));
+    });
+  }, [character?.features]);
+
+  const limitDieResource = useMemo(() => {
+    return soldierLimitResourceFeatures.find((feature) => getFeatureDieBenefit(feature)) || null;
+  }, [soldierLimitResourceFeatures]);
+
+  const limitDieResourceId = useMemo(() => {
+    if (!limitDieResource) return null;
+    const featureIndex = soldierLimitResourceFeatures.indexOf(limitDieResource);
+    return limitDieResource?.id || `feature-${limitDieResource?.name || featureIndex}`;
+  }, [limitDieResource, soldierLimitResourceFeatures]);
+
+  const limitGaugeTrackers = useMemo(() => {
+    const seen = new Set();
+
+    return soldierLimitResourceFeatures.reduce((trackers, feature, featureIndex) => {
+      const sourceFeatureId = feature?.id || `feature-${feature?.name || featureIndex}`;
+      if (!sourceFeatureId || seen.has(sourceFeatureId)) return trackers;
+
+      const gaugeConfig = resolveLimitGauge(feature, characterLevel, derivedMods || {}, effectiveMaxHP);
+      if (!gaugeConfig) return trackers;
+
+      const gaugeStateId = `${sourceFeatureId}-gauge`;
+      seen.add(sourceFeatureId);
+      trackers.push({
+        gaugeStateId,
+        gaugeConfig,
+        gaugeState: normalizeLimitGaugeSnapshot(poolState?.[gaugeStateId], gaugeConfig),
+      });
+      return trackers;
+    }, []);
+  }, [soldierLimitResourceFeatures, characterLevel, derivedMods, effectiveMaxHP, poolState]);
 
   const hasRogueClass = useMemo(() => {
     const classEntries = Array.isArray(character?.classes) ? character.classes : [];
@@ -1319,6 +1738,65 @@ export default function ActionsTab({
       return className === 'cleric' || className === 'paladin';
     });
   }, [character?.classes]);
+
+  const hasSoldierFighterClass = useMemo(() => {
+    const classEntries = Array.isArray(character?.classes) ? character.classes : [];
+    return classEntries.some((entry) => {
+      const className = (entry?.definition?.name || entry?.class || '').toLowerCase().trim();
+      const subclassName = (entry?.subclass || entry?.definition?.subclass || '').toLowerCase().trim();
+      return className === 'fighter' && subclassName.includes('soldier');
+    });
+  }, [character?.classes]);
+
+  const showLimitTab = hasSoldierFighterClass && (limitFeatures.length > 0 || limitDieResource || limitGaugeTrackers.length > 0);
+
+  const limitSummary = useMemo(() => {
+    if (!limitFeatures.length && !limitDieResource) {
+      return {
+        limitDC: 8 + (proficiencyBonus || 0) + (derivedMods?.constitution || 0),
+        limitDie: '',
+        limitMaxUses: 0,
+      };
+    }
+
+    const primary = limitFeatures.find((item) => {
+      const feature = item.data;
+      return resolveFeatureDieDisplay(feature, character, proficiencyBonus, derivedMods)
+        || calculateMaxUses(feature?.max_uses, proficiencyBonus, abilityModifiers, characterLevel, feature) > 0;
+    }) || limitFeatures[0] || null;
+
+    const dcFeature = primary?.data || limitDieResource;
+    const dcBenefits = normalizeBenefits(dcFeature?.benefits ?? dcFeature?.benefit);
+    const limitBenefit = dcBenefits.find((benefit) => normalizeBenefitType(benefit?.type) === 'limit') || {};
+    const limitDie = resolveFeatureDieDisplay(limitDieResource || dcFeature, character, proficiencyBonus, derivedMods)
+      || (typeof limitBenefit?.die === 'string' ? limitBenefit.die : '')
+      || resolveFeatureTextTemplate('${die}', limitDieResource || dcFeature, character, proficiencyBonus, derivedMods, 'limit')
+      || '';
+
+    const abilityMap = {
+      str: 'strength', strength: 'strength',
+      dex: 'dexterity', dexterity: 'dexterity',
+      con: 'constitution', constitution: 'constitution',
+      int: 'intelligence', intelligence: 'intelligence',
+      wis: 'wisdom', wisdom: 'wisdom',
+      cha: 'charisma', charisma: 'charisma'
+    };
+
+    const dcAbilityRaw = String(limitBenefit?.dc_ability || limitBenefit?.ability || 'constitution').toLowerCase().trim();
+    const dcAbility = abilityMap[dcAbilityRaw] || 'constitution';
+    const limitDC = 8 + (proficiencyBonus || 0) + (derivedMods?.[dcAbility] || 0);
+
+    const usesFeature = limitDieResource || dcFeature;
+    const limitMaxUses = usesFeature
+      ? calculateMaxUses(usesFeature?.max_uses, proficiencyBonus, abilityModifiers, characterLevel, usesFeature)
+      : 0;
+
+    return {
+      limitDC,
+      limitDie,
+      limitMaxUses,
+    };
+  }, [limitFeatures, limitDieResource, proficiencyBonus, derivedMods, calculateMaxUses, abilityModifiers, character, characterLevel]);
 
   // Get class name for channel divinity uses calculation
   const clericOrPaladinClassName = useMemo(() => {
@@ -1368,7 +1846,10 @@ export default function ActionsTab({
     if (!hasClericOrPaladinClass && activeSubtab === 'divinity') {
       setActiveSubtab('actions');
     }
-  }, [hasRogueClass, hasClericOrPaladinClass, activeSubtab]);
+    if (!showLimitTab && activeSubtab === 'limit') {
+      setActiveSubtab('actions');
+    }
+  }, [hasRogueClass, hasClericOrPaladinClass, showLimitTab, activeSubtab]);
 
   return (
     <div className="actions-tab">
@@ -1407,6 +1888,14 @@ export default function ActionsTab({
             onClick={() => setActiveSubtab('divinity')}
           >
             Channel Divinity
+          </button>
+        )}
+        {showLimitTab && (
+          <button
+            className={activeSubtab === 'limit' ? 'subtab-btn sneak active' : 'subtab-btn sneak'}
+            onClick={() => setActiveSubtab('limit')}
+          >
+            Limit Breaks
           </button>
         )}
       </div>
@@ -1458,6 +1947,9 @@ export default function ActionsTab({
                   const hasDamage = Boolean(attack.damage);
                   const baseDamage = hasDamage ? parseDamage(attack.damage) : { num: '', die: null };
                   const versatileDamage = attack.versatileDamage ? parseDamage(attack.versatileDamage) : null;
+                  const extraDamageSuffix = Array.isArray(attack.extraDamageDice) && attack.extraDamageDice.length > 0
+                    ? ` + ${attack.extraDamageDice.map((entry) => `${entry.die}${entry.damageType ? ` ${entry.damageType}` : ''}`).join(' + ')}`
+                    : '';
                   const baseNumValue = Number.parseInt(baseDamage.num, 10);
                   const flatDamageTotal = hasDamage && !baseDamage.die && Number.isFinite(baseNumValue)
                     ? baseNumValue + (attack.damageBonus || 0)
@@ -1544,6 +2036,9 @@ export default function ActionsTab({
                             ) : (
                               <span className="damage-none">—</span>
                             )}
+                            {hasDamage && extraDamageSuffix ? (
+                              <span className="damage-extra">{extraDamageSuffix}</span>
+                            ) : null}
                           </div>
                           {attack.versatile && attack.versatileDamage && versatileDamage && (
                             <div className="action-versatile" title={`Versatile: ${attack.versatileDamage}`}>
@@ -1612,7 +2107,7 @@ export default function ActionsTab({
                           <h4 className="feature-name">{feature.name}</h4>
                         </div>
                         
-                        {feature.max_uses && FeatureUsesTracker && (
+                        {FeatureUsesTracker && (
                           <FeatureUsesTracker
                             maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character?.level, feature)}
                             featureId={featureId}
@@ -1683,7 +2178,7 @@ export default function ActionsTab({
                           <h4 className="feature-name">{feature.name}</h4>
                         </div>
                         
-                        {feature.max_uses && FeatureUsesTracker && (
+                        {FeatureUsesTracker && (
                           <FeatureUsesTracker
                             maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character?.level, feature)}
                             featureId={featureId}
@@ -1770,7 +2265,7 @@ export default function ActionsTab({
                         <h4 className="feature-name">{feature.name}</h4>
                       </div>
 
-                      {feature.max_uses && FeatureUsesTracker && (
+                      {FeatureUsesTracker && (
                         <FeatureUsesTracker
                           maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character?.level, feature)}
                           featureId={featureId}
@@ -1837,7 +2332,7 @@ export default function ActionsTab({
                         <h4 className="feature-name">{feature.name}</h4>
                       </div>
 
-                      {feature.max_uses && FeatureUsesTracker && (
+                      {FeatureUsesTracker && (
                         <FeatureUsesTracker
                           maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character?.level, feature)}
                           featureId={featureId}
@@ -1857,6 +2352,145 @@ export default function ActionsTab({
               </div>
             ) : (
               <p className="info-text">No channel divinity features available.</p>
+            )}
+          </>
+        )}
+        {showLimitTab && activeSubtab === 'limit' && (
+          <>
+            <div className="sneak-subtab-header">
+              <span className="sneak-metric-text" title="Limit save DC">
+                Limit DC: {limitSummary.limitDC}
+              </span>
+              <span className="sneak-metric-separator">|</span>
+              <span className="sneak-metric-text" title="Current limit die size">
+                Limit Die: {limitSummary.limitDie || '—'}
+              </span>
+              <span className="sneak-metric-separator">|</span>
+              <span className="sneak-metric-text" title="Maximum limit uses">
+                Limit Uses: {limitSummary.limitMaxUses > 0 ? limitSummary.limitMaxUses : '—'}
+              </span>
+            </div>
+            {(limitDieResource || limitGaugeTrackers.length > 0) && (
+              <div className="limit-resource-strip">
+                {limitDieResource && FeatureUsesTracker && (
+                  <div className="limit-resource-item">
+                    <span className="limit-resource-name">{getFeatureDieBenefit(limitDieResource)?.name || limitDieResource.name || 'Limit Die'}</span>
+                    <FeatureUsesTracker
+                      maxUses={calculateMaxUses(limitDieResource.max_uses, proficiencyBonus, abilityModifiers, characterLevel, limitDieResource)}
+                      featureId={limitDieResourceId}
+                      storedUses={limitDieResourceId ? usesState[limitDieResourceId] : undefined}
+                      onUsesChange={onUsesChange}
+                    />
+                  </div>
+                )}
+                {limitGaugeTrackers.map(({ gaugeStateId, gaugeConfig, gaugeState }) => (
+                  <div key={gaugeStateId} className="limit-resource-item limit-gauge-item">
+                    <span className="limit-resource-name">{gaugeConfig.name}</span>
+                    <div className="limit-gauge-inline">
+                      <input
+                        className="limit-gauge-input"
+                        type="number"
+                        min={0}
+                        max={gaugeConfig.threshold}
+                        value={Object.prototype.hasOwnProperty.call(limitGaugeDraftValues, gaugeStateId)
+                          ? limitGaugeDraftValues[gaugeStateId]
+                          : String(gaugeState.value)}
+                        onChange={(event) => {
+                          const raw = event.target.value;
+                          if (raw === '' || /^\d+$/.test(raw)) {
+                            setLimitGaugeDraftValues((prev) => ({ ...prev, [gaugeStateId]: raw }));
+                          }
+                        }}
+                        onBlur={() => commitLimitGaugeDraftValue(
+                          gaugeStateId,
+                          gaugeConfig,
+                          gaugeState,
+                          Object.prototype.hasOwnProperty.call(limitGaugeDraftValues, gaugeStateId)
+                            ? limitGaugeDraftValues[gaugeStateId]
+                            : String(gaugeState.value)
+                        )}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            commitLimitGaugeDraftValue(
+                              gaugeStateId,
+                              gaugeConfig,
+                              gaugeState,
+                              Object.prototype.hasOwnProperty.call(limitGaugeDraftValues, gaugeStateId)
+                                ? limitGaugeDraftValues[gaugeStateId]
+                                : String(gaugeState.value)
+                            );
+                          }
+                        }}
+                        aria-label="Limit gauge value"
+                      />
+                      <span className="limit-gauge-value">/ {gaugeConfig.threshold}</span>
+                      <button
+                        type="button"
+                        className={`use-box${gaugeState.charges > 0 ? ' used' : ''}`}
+                        onClick={() => onPoolChange(gaugeStateId, normalizeLimitGaugeSnapshot({
+                          ...gaugeState,
+                          charges: gaugeState.charges > 0 ? 0 : 1,
+                          lastProgressAt: Date.now(),
+                        }, gaugeConfig))}
+                        aria-label="Toggle limit charge"
+                        title={`${gaugeConfig.name} charge`}
+                      />
+                      <button
+                        type="button"
+                        className="uses-reset"
+                        onClick={() => onPoolChange(gaugeStateId, normalizeLimitGaugeSnapshot({
+                          value: 0,
+                          charges: 0,
+                          lastProgressAt: Date.now(),
+                        }, gaugeConfig))}
+                        aria-label="Reset limit gauge"
+                      >
+                        <svg className="uses-reset-icon" viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M4 12a8 8 0 1 0 3-6.2" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M4 5v5h5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {limitFeatures.length > 0 ? (
+              <div className="sneak-container">
+                {limitFeatures.map((item) => {
+                  const feature = item.data;
+                  const sourceFeatureId = feature.__sourceFeatureId || feature.id || feature.name;
+                  const featureId = sourceFeatureId;
+                  const shortText = resolveFeatureShortText(feature, character, proficiencyBonus, derivedMods, 'limit');
+                  const descriptionText = resolveFeatureBenefitDescription(feature, character, proficiencyBonus, derivedMods, 'limit');
+
+                  return (
+                    <div key={item.id} className="sneak-feature">
+                      <div className="feature-header">
+                        <h4 className="feature-name">{feature.name}</h4>
+                      </div>
+
+                      {FeatureUsesTracker && (
+                        <FeatureUsesTracker
+                          maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, characterLevel, feature)}
+                          featureId={featureId}
+                          storedUses={usesState[featureId]}
+                          onUsesChange={onUsesChange}
+                        />
+                      )}
+
+                      {(shortText || descriptionText) && (
+                        <div className="sneak-feature-short">
+                          {renderSpellDescription(shortText || descriptionText)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="info-text">No limit features available.</p>
             )}
           </>
         )}

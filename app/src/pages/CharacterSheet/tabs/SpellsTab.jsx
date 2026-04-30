@@ -27,6 +27,102 @@ const normalizeBenefitsInput = (benefits) => {
   return [];
 };
 
+const parseNumericBonus = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const match = value.trim().match(/^([+-]?\d+)$/);
+    if (match) return Number.parseInt(match[1], 10);
+  }
+  return 0;
+};
+
+const isMagicItemAttunementRequired = (magicItem) => {
+  const value = magicItem?.requires_attunement ?? magicItem?.raw_data?.requires_attunement;
+  if (value === null || value === undefined || value === false) return false;
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === 'no' || normalized === 'none' || normalized === 'false') {
+      return false;
+    }
+  }
+
+  return Boolean(value);
+};
+
+const isMagicItemHidden = (magicItem) => {
+  const value = magicItem?.hidden ?? magicItem?.raw_data?.hidden;
+  if (value === null || value === undefined) return false;
+  if (value === true) return true;
+  if (value === false) return false;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+  return Boolean(value);
+};
+
+const getMagicItemSpellcastingBonuses = (character) => {
+  const inventory = Array.isArray(character?.inventory) ? character.inventory : [];
+
+  return inventory.reduce((acc, inventoryItem) => {
+    const magicItem = inventoryItem?.magic_item;
+    if (!magicItem) return acc;
+    if (isMagicItemHidden(magicItem)) return acc;
+    if (isMagicItemAttunementRequired(magicItem) && !inventoryItem.attuned) return acc;
+
+    const benefits = normalizeBenefitsInput(
+      magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
+    );
+
+    benefits.forEach((benefit) => {
+      const type = normalizeBenefitType(benefit?.type);
+      const amount = parseNumericBonus(benefit?.amount ?? benefit?.value ?? benefit?.bonus);
+      if (!amount) return;
+
+      if (type === 'spell_attack_bonus') {
+        acc.attackBonus += amount;
+        return;
+      }
+
+      if (type === 'spell_save_dc_bonus' || type === 'spell_dc_bonus') {
+        acc.saveDCBonus += amount;
+        return;
+      }
+
+      if (type === 'spellcasting_bonus' || type === 'spell_bonus') {
+        const appliesTo = normalizeBenefitType(benefit?.applies_to || benefit?.appliesTo || 'attack_and_dc');
+        if (['attack', 'to_hit', 'spell_attack', 'spell_attack_bonus'].includes(appliesTo)) {
+          acc.attackBonus += amount;
+        } else if (['dc', 'save_dc', 'spell_dc', 'spell_save_dc', 'spell_save_dc_bonus'].includes(appliesTo)) {
+          acc.saveDCBonus += amount;
+        } else {
+          acc.attackBonus += amount;
+          acc.saveDCBonus += amount;
+        }
+      }
+    });
+
+    const fallbackAttack = parseNumericBonus(
+      magicItem?.spell_attack_bonus ?? magicItem?.raw_data?.spell_attack_bonus ?? magicItem?.properties?.spell_attack_bonus
+    );
+    const fallbackDC = parseNumericBonus(
+      magicItem?.spell_save_dc_bonus
+      ?? magicItem?.spell_dc_bonus
+      ?? magicItem?.raw_data?.spell_save_dc_bonus
+      ?? magicItem?.raw_data?.spell_dc_bonus
+      ?? magicItem?.properties?.spell_save_dc_bonus
+      ?? magicItem?.properties?.spell_dc_bonus
+    );
+
+    acc.attackBonus += fallbackAttack;
+    acc.saveDCBonus += fallbackDC;
+
+    return acc;
+  }, { attackBonus: 0, saveDCBonus: 0 });
+};
+
 const hasRitualCasting = (castingTime) => String(castingTime || '')
   .toLowerCase()
   .replace(/\s+/g, ' ')
@@ -362,8 +458,9 @@ export default function SpellsTab({ character, spells, loading, proficiencyBonus
   const rawAbility = character.spellcasting_ability?.toLowerCase() || 'int';
   const spellAbility = abilityMap[rawAbility] || 'intelligence';
   const spellAbilityMod = derivedMods?.[spellAbility] || 0;
-  const spellAttackBonus = spellAbilityMod + (proficiencyBonus || 0);
-  const spellSaveDC = 8 + (proficiencyBonus || 0) + spellAbilityMod;
+  const spellcastingItemBonuses = getMagicItemSpellcastingBonuses(character);
+  const spellAttackBonus = spellAbilityMod + (proficiencyBonus || 0) + (spellcastingItemBonuses.attackBonus || 0);
+  const spellSaveDC = 8 + (proficiencyBonus || 0) + spellAbilityMod + (spellcastingItemBonuses.saveDCBonus || 0);
 
   // Check if character can prepare spells
   const canPrepareSpells = () => {

@@ -836,6 +836,14 @@ const benefitHandlers = {
     // Stances are handled at the UI/CharacterSheet level, not here
     // This is documented for reference only
     return [];
+  },
+
+  /**
+   * divinity: Semantic/non-numeric feature marker used by UI grouping.
+   * No direct numeric bonus conversion happens in the bonus engine.
+   */
+  divinity: () => {
+    return [];
   }
 };
 

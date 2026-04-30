@@ -278,6 +278,35 @@
   font-weight: 600;
 }
 
+.spell-description .rich-markdown,
+.spell-higher-levels .rich-markdown {
+  overflow-x: auto;
+}
+
+.spell-description .rich-markdown table,
+.spell-higher-levels .rich-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 0.9rem;
+}
+
+.spell-description .rich-markdown th,
+.spell-description .rich-markdown td,
+.spell-higher-levels .rich-markdown th,
+.spell-higher-levels .rich-markdown td {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.spell-description .rich-markdown th,
+.spell-higher-levels .rich-markdown th {
+  font-family: 'Cinzel', 'Georgia', serif;
+  color: var(--school-accent, #f3c973);
+}
+
 .spell-mechanics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

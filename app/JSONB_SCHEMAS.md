@@ -387,24 +387,100 @@ Note: For features granting expertise, use the `skill_expertise` benefit type in
 
 ### `benefits` (JSONB, nullable)
 
-Structured benefits for class/species/background features. This mirrors the benefits format used in the character sheet spec.
+Structured benefits for class/species/background features.
+
+This section is aligned to the current runtime behavior in `app/src/lib/bonusEngine.js`.
+Some types produce numeric bonuses in the bonus engine, while others are semantic/UI-only and are intentionally no-op in bonus aggregation.
 
 ```typescript
 Array<
-  | { type: 'skill_proficiency'; skill: string; alternate_skill?: boolean }
+  // Skill/check/save numeric bonuses
+  | { type: 'skill_modifier_bonus'; skills: string[]; bonus_source: string; bonus_type?: string }
+  | { type: 'skill_bonus'; skills: string[]; amount: number; bonus_type?: string }
+  | { type: 'ability_modifier_bonus'; abilities: string[]; bonus_source: string }
+  | { type: 'save_modifier_bonus'; saves: string[]; bonus_source: string }
+  | { type: 'save_bonus'; abilities: Array<'all' | string>; amount: number; bonus_type?: string }
+
+  // AC / HP / combat math
+  | { type: 'ac_bonus'; value?: number; amount?: number; bonus_type?: string; shield_ignore?: boolean }
+  | { type: 'ac_override'; base: number; mods?: string[]; shields_allowed?: boolean }
+  | { type: 'hp_bonus'; amount: number | 'formula'; formula?: string; bonus_type?: string }
+  | { type: 'melee_weapon_attack_bonus'; bonus_source?: string; amount?: number; value?: number; weapon_property?: string; versatile?: number; bonus_type?: string }
+  | { type: 'melee_weapon_damage_bonus'; amount?: number; value?: number; weapon_property?: string; versatile?: number; bonus_type?: string }
+
+  // Initiative / movement / senses
+  | { type: 'initiative_bonus'; bonus: 'proficiency' | 'proficiency_bonus' | string | number }
+  | { type: 'init_bonus'; amount: 'proficiency' | 'proficiency_bonus' | string | number } // legacy alias
+  | { type: 'speed'; speed_value: string; movement_type: string }
+  | { type: 'speed_bonus'; speed_type?: string; amount?: number; value?: number; bonus_type?: string }
+  | { type: 'sense'; sense: string; range: string | number; bonus_type?: string }
+
+  // Resistances / immunities / advantage markers
+  | { type: 'damage_resistance'; damage_types?: string[]; damage_type?: string; types?: string[] }
+  | { type: 'damage_immunity'; damage_types?: string[]; damage_type?: string; types?: string[] }
+  | { type: 'condition_immunity'; conditions?: string[]; condition?: string }
+  | { type: 'condition_resistance'; conditions?: string[]; condition?: string; save_modifier?: 'advantage' | string }
+  | { type: 'skill_advantage'; skills: string[] }
+  | { type: 'saving_throw_advantage'; saves: string[] }
+
+  // Proficiency/selection/semantic feature markers (UI-managed)
+  | { type: 'skill_proficiency'; skill?: string; skills?: string[]; alternate_skill?: boolean }
   | { type: 'skill_expertise'; skills: string[]; level_scaling?: Record<string, { skills: string[] }> }
   | { type: 'skill_dual_ability'; skills: string[]; ability: string }
   | { type: 'skill_half_proficiency' }
-  | { type: 'skill_modifier_bonus'; skills: string[]; bonus_source: string }
-  | { type: 'saving_throw_bonus'; ability: string; bonus_source: string }
-  | { type: 'ability_check_bonus'; ability: string; bonus_source: string }
-  | { type: 'passive_bonus'; passive_name: string; bonus: number }
+  | { type: 'armor_proficiency'; level: 'light' | 'medium' | 'heavy' | string }
+  | { type: 'shield_proficiency'; value?: boolean }
   | { type: 'bonus_action'; name: string; range?: string; target?: string; pb_multiplier?: number }
-  | { type: 'feature_die'; name: string; die: string; level_scaling?: Record<string, string> }
-  | { type: 'speed'; speed_value: string; movement_type: string }
-  | { type: 'initiative_bonus'; bonus: string | number }
+  | {
+      type: 'feature_die';
+      name: string;
+      die: string;
+      level_scaling?: Record<string, string>; // die size scaling by level
+      scaling?: Record<string, string>; // legacy alias for level_scaling
+      max_uses?: string | number; // preferred explicit uses source
+      max?: string | number; // alias
+      uses?: string | number; // alias
+      count?: string | number; // alias
+      value?: string | number; // alias; supports "formula"
+      formula?: string; // e.g., "2*proficiency", "level/2ru"
+      use_scaling?: Record<string, number>; // uses scaling by level
+    }
+  | {
+      type: 'gauge';
+      name?: string;
+      threshold?: number | 'half_hp_max' | 'formula';
+      formula?: string;
+      max_charges?: number;
+      charge_max?: number; // alias
+      timeout_seconds?: number;
+      reset_after_seconds?: number; // alias
+      decay_seconds?: number; // alias
+      auto_fill_on_damage?: boolean;
+    }
+  | { type: 'reaction'; name?: string; trigger?: string; effect?: string; [key: string]: any }
+  | {
+      type: 'select';
+      select: {
+        choices?: any[];
+        [choiceId: string]: any;
+      };
+    }
+  | {
+      type: 'stance';
+      stances: Array<{
+        name: string;
+        benefits?: Array<Record<string, any>>;
+      }>;
+    }
+  | { type: 'divinity'; [key: string]: any }
 >;
 ```
+
+Notes:
+
+- `saving_throw_bonus`, `ability_check_bonus`, and `passive_bonus` are older doc names and are not currently handled by the bonus engine handlers.
+- `init_bonus` is a legacy alias of `initiative_bonus` and is still accepted.
+- `select`, `stance`, proficiency, and action-style entries are included so they are recognized without warnings; their behavior is resolved in the Character Sheet/Actions UI logic.
 
 **Example (Bardic Inspiration):**
 ```json
@@ -424,6 +500,44 @@ Array<
       "10": "d10",
       "15": "d12"
     }
+  }
+]
+```
+
+**Example (Subclass die with count + size scaling):**
+```json
+[
+  {
+    "type": "feature_die",
+    "name": "Psionic Energy",
+    "die": "d6",
+    "level_scaling": {
+      "5": "d8",
+      "11": "d10",
+      "17": "d12"
+    },
+    "formula": "2*proficiency",
+    "value": "formula"
+  }
+]
+```
+
+`feature_die` count source resolution order in runtime:
+
+- `max_uses`, `max`, `uses`, `count`, `value`
+- if `value` is `"formula"`, evaluate `formula`
+- if none are present but `use_scaling` exists, resolve by highest level threshold
+
+**Example (Limit Gauge):**
+```json
+[
+  {
+    "type": "gauge",
+    "name": "Limit Gauge",
+    "threshold": "half_hp_max",
+    "max_charges": 3,
+    "timeout_seconds": 60,
+    "auto_fill_on_damage": true
   }
 ]
 ```
@@ -489,6 +603,40 @@ With proficiency bonus +2, this would display as "10 ft" (2 * 5) in the short te
 ]
 ```
 Bases: proficiency_bonus, ability name (as modifier), or flat value.
+
+**Example (AC override formula style):**
+```json
+[
+  {
+    "type": "ac_override",
+    "base": 13,
+    "mods": ["dexterity"],
+    "shields_allowed": true
+  }
+]
+```
+
+**Example (HP formula bonus):**
+```json
+[
+  {
+    "type": "hp_bonus",
+    "amount": "formula",
+    "formula": "2*level"
+  }
+]
+```
+
+**Example (Condition resistance marker):**
+```json
+[
+  {
+    "type": "condition_resistance",
+    "conditions": ["poisoned"],
+    "save_modifier": "advantage"
+  }
+]
+```
 
 ---
 

@@ -6,6 +6,7 @@ import { collectBonuses, deriveCharacterStats } from '../lib/bonusEngine';
 import { useAuth } from '../context/AuthContext';
 import { useCharacter } from '../hooks/useCharacter';
 import { supabase } from '../lib/supabase';
+import { renderSpellDescription } from '../lib/spellUtils.jsx';
 import { extractFeatAbilityScoreImprovements, getJoinedFeat, normalizeFeatChoices } from '../lib/featChoices';
 import AbilityScoreInspector from '../components/AbilityScoreInspector';
 import ACInspector from '../components/ACInspector';
@@ -38,58 +39,7 @@ import AbilitiesTab from './CharacterSheet/tabs/AbilitiesTab';
  * Exception: Only use base abilities when collecting/deriving stats in the first place
  */
 
-// Helper to parse markdown-like formatting in feature descriptions
-// Supports: **bold** and \n\n or /n/n for paragraphs
-const parseFeatureDescription = (text) => {
-  if (!text) return null;
-  
-  // Handle actual newlines from database: convert \n to \n\n for paragraph breaks
-  let processedText = text.replace(/\n/g, '\n\n');
-  
-  // Split by paragraph breaks
-  let paragraphs = processedText.split(/\n\n/);
-  
-  return paragraphs.map((paragraph, pIdx) => {
-    // Skip empty paragraphs
-    if (!paragraph.trim()) return null;
-    
-    // Parse **bold** and *italic* within each paragraph
-    const parts = [];
-    let lastIndex = 0;
-    // Match both **bold** and *italic* (bold must be checked first to avoid matching ** as two italics)
-    const markdownRegex = /(\*\*([^*]+)\*\*)|(\*([^*]+)\*)/g;
-    let match;
-    
-    while ((match = markdownRegex.exec(paragraph)) !== null) {
-      // Add text before the match
-      if (match.index > lastIndex) {
-        parts.push(paragraph.substring(lastIndex, match.index));
-      }
-      
-      // Check if it's bold (**text**) or italic (*text*)
-      if (match[1]) {
-        // Bold text
-        parts.push(<strong key={`bold-${pIdx}-${parts.length}`}>{match[2]}</strong>);
-      } else if (match[3]) {
-        // Italic text
-        parts.push(<em key={`italic-${pIdx}-${parts.length}`}>{match[4]}</em>);
-      }
-      
-      lastIndex = match.index + match[0].length;
-    }
-    
-    // Add remaining text after last match
-    if (lastIndex < paragraph.length) {
-      parts.push(paragraph.substring(lastIndex));
-    }
-    
-    return (
-      <p key={`para-${pIdx}`} className="feature-description">
-        {parts.length > 0 ? parts : paragraph}
-      </p>
-    );
-  }).filter(p => p !== null);
-};
+const parseFeatureDescription = (text) => renderSpellDescription(text);
 
 // Helper to convert ability score improvements to bonus format
 
@@ -191,9 +141,58 @@ const RARITY_ORDER = {
  */
 const isWeaponProficient = (weapon, character) => {
   if (!weapon || !character) return false;
+
+  const normalizeToken = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/\+\d+/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const additionalWeaponTokens = (() => {
+    const raw = character?.weapons;
+    if (!raw) return [];
+
+    const values = Array.isArray(raw)
+      ? raw
+      : typeof raw === 'string'
+        ? raw.split(/[;,]/)
+        : [];
+
+    return values
+      .flatMap((entry) => {
+        if (typeof entry === 'string') return [entry];
+        if (entry && typeof entry === 'object') {
+          return [entry.name, entry.weapon, entry.index].filter(Boolean);
+        }
+        return [];
+      })
+      .map(normalizeToken)
+      .filter(Boolean);
+  })();
   
   const weaponType = weapon.type || '';
   const isMartial = weaponType.includes('Martial');
+  const isSimple = !isMartial;
+
+  const weaponName = normalizeToken(
+    weapon.name
+      || weapon.raw_data?.name
+      || weapon.raw_data?.index
+      || ''
+  );
+
+  if (additionalWeaponTokens.some((token) => token === weaponName)) {
+    return true;
+  }
+
+  if (isMartial && additionalWeaponTokens.some((token) => ['martial weapon', 'martial weapons'].includes(token))) {
+    return true;
+  }
+
+  if (isSimple && additionalWeaponTokens.some((token) => ['simple weapon', 'simple weapons'].includes(token))) {
+    return true;
+  }
   
   // Everyone is proficient with Simple weapons
   if (!isMartial) return true;
@@ -483,6 +482,12 @@ const evaluatePoolFormula = (formula, level, abilityModifiers = {}) => {
   });
 
   normalizedFormula = normalizedFormula.replace(/\blevel\b/gi, String(level || 1));
+  if (abilityModifiers?.proficiency !== undefined) {
+    normalizedFormula = normalizedFormula.replace(/\bproficiency\b/gi, String(Number(abilityModifiers.proficiency) || 0));
+  }
+  if (abilityModifiers?.proficiency_bonus !== undefined) {
+    normalizedFormula = normalizedFormula.replace(/\bproficiency_bonus\b/gi, String(Number(abilityModifiers.proficiency_bonus) || 0));
+  }
 
   let roundingMode = null;
   const roundingMatch = normalizedFormula.match(/^(.*?)(ru|rd)\s*$/i);
@@ -545,6 +550,70 @@ const getFeaturePool = (feature, characterLevel, abilityModifiers) => {
   };
 };
 
+const getFeatureGauge = (feature, characterLevel, abilityModifiers, maxHP = 0) => {
+  const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
+  const gaugeBenefit = benefits.find((benefit) => String(benefit?.type || '').toLowerCase().trim() === 'gauge');
+  if (!gaugeBenefit) return null;
+
+  const thresholdRaw = gaugeBenefit?.threshold ?? gaugeBenefit?.trigger ?? 'half_hp_max';
+  let threshold = 0;
+
+  if (typeof thresholdRaw === 'number') {
+    threshold = Math.max(1, Math.floor(thresholdRaw));
+  } else {
+    const thresholdToken = String(thresholdRaw || '').toLowerCase().trim();
+    if (['half_hp_max', 'half_max_hp', 'hp_max_half', 'half_hp'].includes(thresholdToken)) {
+      threshold = Math.max(1, Math.ceil((Number(maxHP) || 0) / 2));
+    } else if (thresholdToken === 'formula' && gaugeBenefit?.formula) {
+      threshold = Math.max(1, evaluatePoolFormula(gaugeBenefit.formula, characterLevel, abilityModifiers));
+    } else {
+      const numericThreshold = Number(thresholdToken);
+      threshold = Number.isFinite(numericThreshold) ? Math.max(1, Math.floor(numericThreshold)) : 0;
+    }
+  }
+
+  if (!threshold || threshold <= 0) return null;
+
+  const maxCharges = 1;
+
+  const timeoutSeconds = Math.max(
+    0,
+    Math.floor(
+      Number(
+        gaugeBenefit?.timeout_seconds
+        ?? gaugeBenefit?.reset_after_seconds
+        ?? gaugeBenefit?.decay_seconds
+        ?? 60
+      ) || 0
+    )
+  );
+
+  return {
+    name: gaugeBenefit?.name || feature?.name || 'Limit Gauge',
+    threshold,
+    maxCharges,
+    timeoutSeconds,
+    autoFillOnDamage: gaugeBenefit?.auto_fill_on_damage !== false,
+  };
+};
+
+const normalizeGaugeSnapshot = (snapshot, gaugeConfig) => {
+  const maxCharges = 1;
+  const threshold = Math.max(1, Number(gaugeConfig?.threshold) || 1);
+
+  if (!snapshot || typeof snapshot !== 'object') {
+    return { value: 0, charges: 0, lastProgressAt: Date.now() };
+  }
+
+  const value = Math.max(0, Math.min(threshold, Math.floor(Number(snapshot.value) || 0)));
+  const charges = Math.max(0, Math.min(maxCharges, Math.floor(Number(snapshot.charges) || 0)));
+  const lastProgressAt = Number.isFinite(Number(snapshot.lastProgressAt))
+    ? Number(snapshot.lastProgressAt)
+    : Date.now();
+
+  return { value, charges, lastProgressAt };
+};
+
 const interpolateFeatureText = (text, feature, characterLevel = 1, proficiencyBonus = 0, abilityModifiers = {}, preferredBenefitType = null) => {
   const template = typeof text === 'string' ? text : '';
   if (!template) return '';
@@ -567,6 +636,34 @@ const interpolateFeatureText = (text, feature, characterLevel = 1, proficiencyBo
   Object.entries(modifierMap).forEach(([ability, modifier]) => {
     result = result.replaceAll(`\${${ability}}`, String(modifier));
     result = result.replaceAll(`\${${ability}_mod}`, String(modifier >= 0 ? `+${modifier}` : modifier));
+  });
+
+  const abilityAliasMap = {
+    str: 'strength',
+    strength: 'strength',
+    dex: 'dexterity',
+    dexterity: 'dexterity',
+    con: 'constitution',
+    constitution: 'constitution',
+    int: 'intelligence',
+    intelligence: 'intelligence',
+    wis: 'wisdom',
+    wisdom: 'wisdom',
+    cha: 'charisma',
+    charisma: 'charisma',
+  };
+
+  const computeSaveDC = (abilityKey = 'constitution') => {
+    const normalizedAbility = abilityAliasMap[String(abilityKey || '').toLowerCase().trim()] || 'constitution';
+    const mod = Number(modifierMap?.[normalizedAbility]) || 0;
+    const pb = Number(proficiencyBonus) || 0;
+    return 8 + pb + mod;
+  };
+
+  result = result.replace(/\$\{dc:([a-z_]+)\}/gi, (_, abilityToken) => String(computeSaveDC(abilityToken)));
+  result = result.replaceAll('${dc}', String(computeSaveDC('constitution')));
+  ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'].forEach((ability) => {
+    result = result.replaceAll(`\${dc_${ability}}`, String(computeSaveDC(ability)));
   });
 
   const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
@@ -1009,6 +1106,83 @@ function CharacterSheet() {
   const handlePoolChange = (poolId, newValue) => {
     setPoolState((prev) => ({ ...prev, [poolId]: newValue }));
   };
+
+  const limitGaugeTimeoutConfigs = useMemo(() => {
+    if (!character) return [];
+
+    const entries = [];
+    const fallbackMods = {
+      strength: 0,
+      dexterity: 0,
+      constitution: 0,
+      intelligence: 0,
+      wisdom: 0,
+      charisma: 0,
+    };
+    const level = Math.max(1, Number(character?.level) || 1);
+    const maxHP = Math.max(1, Number(character?.max_hp) || 1);
+
+    const collectGaugeConfig = (feature, featureId) => {
+      if (!feature || !featureId) return;
+      const gauge = getFeatureGauge(feature, level, fallbackMods, maxHP);
+      if (!gauge) return;
+      entries.push({
+        id: `${featureId}-gauge`,
+        timeoutSeconds: gauge.timeoutSeconds,
+        threshold: gauge.threshold,
+        maxCharges: gauge.maxCharges,
+      });
+    };
+
+    (character.features || []).forEach((feature, idx) => {
+      const featureId = feature?.id || `feature-${feature?.name || idx}`;
+      collectGaugeConfig(feature, featureId);
+    });
+
+    (character.feats || []).forEach((featEntry, idx) => {
+      const joinedFeat = getJoinedFeat(featEntry);
+      const feat = joinedFeat || featEntry;
+      if (!feat) return;
+      const featId = featEntry?.id || feat.id || `feat-${feat.name || idx}`;
+      collectGaugeConfig(feat, featId);
+    });
+
+    return entries;
+  }, [character]);
+
+  useEffect(() => {
+    if (!limitGaugeTimeoutConfigs.length) return undefined;
+
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+
+      setPoolState((prev) => {
+        let changed = false;
+        const next = { ...prev };
+
+        limitGaugeTimeoutConfigs.forEach((gauge) => {
+          if (!gauge.timeoutSeconds || gauge.timeoutSeconds <= 0) return;
+
+          const snapshot = normalizeGaugeSnapshot(prev?.[gauge.id], gauge);
+          if (snapshot.value <= 0) return;
+
+          const staleMs = gauge.timeoutSeconds * 1000;
+          if ((now - snapshot.lastProgressAt) < staleMs) return;
+
+          next[gauge.id] = normalizeGaugeSnapshot({
+            ...snapshot,
+            value: 0,
+            lastProgressAt: now,
+          }, gauge);
+          changed = true;
+        });
+
+        return changed ? next : prev;
+      });
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [limitGaugeTimeoutConfigs]);
 
   const handleSpellUsesChange = (spellId, newUses) => {
     setSpellUses(prev => ({ ...prev, [spellId]: newUses }));
@@ -1809,6 +1983,88 @@ function CharacterSheet() {
   const barrierCurrentTotal = barrierPools.reduce((sum, pool) => sum + pool.current, 0);
   const barrierMaxTotal = barrierPools.reduce((sum, pool) => sum + pool.max, 0);
 
+  const limitGauges = (() => {
+    const entries = [];
+
+    const collectGauge = (feature, featureId) => {
+      if (!feature || !featureId) return;
+      const gauge = getFeatureGauge(feature, character.level, derivedMods, effectiveDisplayMaxHP);
+      if (!gauge) return;
+
+      const gaugeStateKey = `${featureId}-gauge`;
+      const snapshot = normalizeGaugeSnapshot(poolState?.[gaugeStateKey], gauge);
+
+      entries.push({
+        id: gaugeStateKey,
+        name: gauge.name,
+        threshold: gauge.threshold,
+        maxCharges: gauge.maxCharges,
+        timeoutSeconds: gauge.timeoutSeconds,
+        autoFillOnDamage: gauge.autoFillOnDamage,
+        value: snapshot.value,
+        charges: snapshot.charges,
+        lastProgressAt: snapshot.lastProgressAt,
+      });
+    };
+
+    (character.features || []).forEach((feature, idx) => {
+      const featureId = feature?.id || `feature-${feature?.name || idx}`;
+      collectGauge(feature, featureId);
+    });
+
+    (character.feats || []).forEach((featEntry, idx) => {
+      const joinedFeat = getJoinedFeat(featEntry);
+      const feat = joinedFeat || featEntry;
+      if (!feat) return;
+      const featId = featEntry?.id || feat.id || `feat-${feat.name || idx}`;
+      collectGauge(feat, featId);
+    });
+
+    return entries;
+  })();
+
+  const handleLimitGaugeDamage = (damageAmount) => {
+    const appliedDamage = Math.max(0, Math.floor(Number(damageAmount) || 0));
+    if (appliedDamage <= 0 || !limitGauges.length) return;
+
+    const now = Date.now();
+
+    setPoolState((prev) => {
+      let changed = false;
+      const next = { ...prev };
+
+      limitGauges.forEach((gauge) => {
+        if (!gauge.autoFillOnDamage) return;
+
+        const current = normalizeGaugeSnapshot(prev?.[gauge.id], gauge);
+        if (current.charges >= gauge.maxCharges) return;
+
+        let nextValue = current.value + appliedDamage;
+        let nextCharges = current.charges;
+
+        if (nextValue >= gauge.threshold) {
+          nextCharges = Math.min(gauge.maxCharges, current.charges + 1);
+          nextValue = 0;
+        }
+
+        if (nextCharges >= gauge.maxCharges) {
+          nextValue = 0;
+        }
+
+        if (nextValue !== current.value || nextCharges !== current.charges) {
+          next[gauge.id] = normalizeGaugeSnapshot({
+            value: nextValue,
+            charges: nextCharges,
+            lastProgressAt: now,
+          }, gauge);
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
+  };
+
   return (
     <div className="character-sheet">
       {/* Admin Character Selector */}
@@ -2047,6 +2303,9 @@ function CharacterSheet() {
               allBonuses={allBonuses}
               setSelectedItem={setSelectedItem}
               usesState={usesState}
+              poolState={poolState}
+              onPoolChange={handlePoolChange}
+              effectiveMaxHP={effectiveDisplayMaxHP}
               onUsesChange={handleUsesChange}
               calculateMaxUses={calculateMaxUses}
               abilityModifiers={derivedMods}
@@ -2072,6 +2331,7 @@ function CharacterSheet() {
             <InventoryTab 
               character={character} 
               onInventoryUpdate={refetchInventory} 
+              onSpellsUpdate={refetchSpells}
               setSelectedItem={setSelectedItem}
               activePocket={activePocket}
               setActivePocket={setActivePocket}
@@ -2082,6 +2342,7 @@ function CharacterSheet() {
               character={character} 
               proficiencyBonus={proficiencyBonus} 
               abilityModifiers={derivedMods}
+              effectiveMaxHP={effectiveDisplayMaxHP}
               usesState={usesState}
               poolState={poolState}
               expandedDescriptions={expandedDescriptions}
@@ -2117,6 +2378,7 @@ function CharacterSheet() {
           barrierCurrentTotal={barrierCurrentTotal}
           barrierMaxTotal={barrierMaxTotal}
           onBarrierPoolChange={handlePoolChange}
+          onDamageTaken={handleLimitGaugeDamage}
           deathSaveSuccesses={deathSaveSuccesses}
           setDeathSaveSuccesses={setDeathSaveSuccesses}
           deathSaveFailures={deathSaveFailures}
@@ -2259,6 +2521,9 @@ function CharacterSheet() {
         abilityModifiers={derivedMods}
         characterId={character?.id}
         character={character}
+        features={featuresToProcess}
+        activeFeatureSelections={activeFeatureSelections}
+        activeStances={activeStances}
       />
 
       {/* New Pocket Modal */}
@@ -2432,7 +2697,7 @@ const getMagicItemPool = (magicItem, characterLevel, abilityModifiers) => {
 };
 
 // Tab 4: Inventory
-function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePocket, setActivePocket }) {
+function InventoryTab({ character, onInventoryUpdate, onSpellsUpdate, setSelectedItem, activePocket, setActivePocket }) {
   const [goldInput, setGoldInput] = useState(character?.gold ?? 0);
   const [savedGold, setSavedGold] = useState(character?.gold ?? 0);
   const [isSavingGold, setIsSavingGold] = useState(false);
@@ -2720,6 +2985,10 @@ function InventoryTab({ character, onInventoryUpdate, setSelectedItem, activePoc
       // Refetch inventory to update display
       if (onInventoryUpdate) {
         await onInventoryUpdate();
+      }
+      // Rebuild granted spells so attunement-gated item spells update immediately.
+      if (onSpellsUpdate) {
+        await onSpellsUpdate();
       }
     } catch (err) {
       console.error('Error toggling attunement:', err);
@@ -3057,7 +3326,23 @@ function getUnlockedMasteries(character) {
 }
 
 // Item Modal Component - displays detailed information about inventory items
-function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOptions = [], onPocketUpdate, onCreatePocket, proficiencyBonus, abilityModifiers, characterId, character }) {
+function ItemModal({
+  isOpen,
+  item,
+  onClose,
+  onDelete,
+  onQuantityUpdate,
+  pocketOptions = [],
+  onPocketUpdate,
+  onCreatePocket,
+  proficiencyBonus,
+  abilityModifiers,
+  characterId,
+  character,
+  features = [],
+  activeFeatureSelections = {},
+  activeStances = {},
+}) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [quantityInput, setQuantityInput] = useState(item?.quantity || 1);
   const [pocketInput, setPocketInput] = useState(item?.pocket || '');
@@ -3378,7 +3663,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
                   
                   if (isShieldItem) {
                     // Shield proficiency check
-                    const isProficient = isShieldProficient(character, featuresToProcess, {
+                    const isProficient = isShieldProficient(character, features, {
                       activeSelections: activeFeatureSelections,
                       activeStances,
                     });
@@ -3392,7 +3677,7 @@ function ItemModal({ isOpen, item, onClose, onDelete, onQuantityUpdate, pocketOp
                     );
                   } else {
                     // Armor proficiency check
-                    const isProficient = isArmorProficient(linkedEquipment, character, featuresToProcess, {
+                    const isProficient = isArmorProficient(linkedEquipment, character, features, {
                       activeSelections: activeFeatureSelections,
                       activeStances,
                     });
@@ -3688,7 +3973,38 @@ const getUseScalingMap = (feature) => {
 // Helper to calculate max uses from strings like:
 // "charisma", "proficiency", "level", "level/2ru", "level/2rd", "3", "scaling"
 const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, characterLevel = 1, feature = null, explicitBase = null) => {
-  if (maxUsesValue === null || maxUsesValue === undefined || maxUsesValue === '') return 0;
+  const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
+  const featureDieBenefit = benefits.find((benefit) => normalizeBenefitType(benefit?.type) === 'feature_die') || null;
+
+  const hasFeatureDieUses = Boolean(
+    featureDieBenefit && (
+      featureDieBenefit.max_uses !== undefined
+      || featureDieBenefit.max !== undefined
+      || featureDieBenefit.uses !== undefined
+      || featureDieBenefit.count !== undefined
+      || featureDieBenefit.value !== undefined
+      || featureDieBenefit.formula
+      || (featureDieBenefit.use_scaling && typeof featureDieBenefit.use_scaling === 'object')
+    )
+  );
+
+  const normalizedMaxUsesValue =
+    maxUsesValue === null || maxUsesValue === undefined || maxUsesValue === ''
+      ? (
+        hasFeatureDieUses
+          ? (
+            featureDieBenefit.max_uses
+            ?? featureDieBenefit.max
+            ?? featureDieBenefit.uses
+            ?? featureDieBenefit.count
+            ?? featureDieBenefit.value
+            ?? (featureDieBenefit.formula ? 'formula' : (featureDieBenefit.use_scaling ? 'scaling' : null))
+          )
+          : null
+      )
+      : maxUsesValue;
+
+  if (normalizedMaxUsesValue === null || normalizedMaxUsesValue === undefined || normalizedMaxUsesValue === '') return 0;
 
   const abilities = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
 
@@ -3697,6 +4013,7 @@ const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, char
     if (!normalized) return null;
 
     if (normalized === 'proficiency') return Number(proficiencyBonus) || 0;
+    if (normalized === 'proficiency_bonus') return Number(proficiencyBonus) || 0;
     if (normalized === 'level') return Number(characterLevel) || 0;
     if (abilities.includes(normalized)) return Number(abilityModifiers?.[normalized]) || 0;
 
@@ -3706,7 +4023,7 @@ const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, char
     return null;
   };
 
-  const str = String(maxUsesValue).toLowerCase().trim();
+  const str = String(normalizedMaxUsesValue).toLowerCase().trim();
 
   // Special scaling resources
   if (str === 'wildshape') {
@@ -3719,7 +4036,9 @@ const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, char
   // Feature-driven use scaling from benefits.use_scaling
   // Example: { use_scaling: { "1": 2, "4": 3, "12": 4 } }
   if (str === 'scaling') {
-    const scalingMap = getUseScalingMap(feature);
+    const scalingMap = (featureDieBenefit?.use_scaling && typeof featureDieBenefit.use_scaling === 'object')
+      ? featureDieBenefit.use_scaling
+      : getUseScalingMap(feature);
     if (!scalingMap || typeof scalingMap !== 'object') return 0;
 
     const level = Math.max(1, Number(characterLevel) || 1);
@@ -3736,6 +4055,16 @@ const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, char
     });
 
     return Math.max(0, Math.floor(resolvedUses));
+  }
+
+  if (str === 'formula') {
+    const formula = typeof featureDieBenefit?.formula === 'string' ? featureDieBenefit.formula : '';
+    if (!formula) return 0;
+    return evaluatePoolFormula(formula, characterLevel, {
+      ...(abilityModifiers || {}),
+      proficiency: Number(proficiencyBonus) || 0,
+      proficiency_bonus: Number(proficiencyBonus) || 0,
+    });
   }
 
   // Support patterns like level/2ru, level/2rd, proficiency/2ru, charisma/2rd
@@ -3933,6 +4262,84 @@ function FeaturePoolTracker({ poolMax, featureId, poolName, storedValue, onPoolC
   );
 }
 
+function FeatureGaugeTracker({ gauge, featureId, storedState, onGaugeChange }) {
+  if (!gauge || !featureId) return null;
+
+  const normalizedStored = normalizeGaugeSnapshot(storedState, gauge);
+
+  const [localValue, setLocalValue] = useState(normalizedStored.value);
+  const [localCharges, setLocalCharges] = useState(normalizedStored.charges);
+  const [localValueDraft, setLocalValueDraft] = useState(String(normalizedStored.value));
+
+  useEffect(() => {
+    const normalized = normalizeGaugeSnapshot(storedState, gauge);
+    setLocalValue(normalized.value);
+    setLocalCharges(normalized.charges);
+    setLocalValueDraft(String(normalized.value));
+  }, [storedState, gauge]);
+
+  const pushState = (value, charges) => {
+    const normalized = normalizeGaugeSnapshot({
+      value,
+      charges,
+      lastProgressAt: Date.now(),
+    }, gauge);
+    setLocalValue(normalized.value);
+    setLocalCharges(normalized.charges);
+    setLocalValueDraft(String(normalized.value));
+    onGaugeChange?.(featureId, normalized);
+  };
+
+  const commitDraftValue = (draftValue) => {
+    if (draftValue === '') {
+      pushState(0, localCharges);
+      return;
+    }
+    const parsed = Number.parseInt(draftValue, 10);
+    pushState(Number.isNaN(parsed) ? 0 : parsed, localCharges);
+  };
+
+  return (
+    <div className="gauge-tracker" onClick={(event) => event.stopPropagation()}>
+      <span className="gauge-name">{gauge.name || 'Gauge'}</span>
+      <div className="gauge-value-controls">
+        <input
+          className="gauge-value-input"
+          type="number"
+          min={0}
+          max={gauge.threshold}
+          value={localValueDraft}
+          onChange={(event) => {
+            const raw = event.target.value;
+            if (raw === '' || /^\d+$/.test(raw)) {
+              setLocalValueDraft(raw);
+            }
+          }}
+          onBlur={() => commitDraftValue(localValueDraft)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              commitDraftValue(localValueDraft);
+            }
+          }}
+          aria-label="Gauge value"
+        />
+        <span className="gauge-threshold">/ {gauge.threshold}</span>
+      </div>
+      <div className="gauge-charge-controls">
+        <button
+          type="button"
+          className={`use-box ${localCharges > 0 ? 'used' : ''}`}
+          onClick={() => pushState(localValue, localCharges > 0 ? 0 : 1)}
+          aria-label="Toggle gauge charge"
+          title="Toggle gauge charge"
+        />
+      </div>
+      <button type="button" className="gauge-reset" onClick={() => pushState(0, 0)} aria-label="Reset gauge">Reset</button>
+    </div>
+  );
+}
+
 function FeatureSelectControl({ feature, featureId, activeSelection, onSelectionChange }) {
   if (!feature || !featureId) return null;
 
@@ -4016,6 +4423,7 @@ function FeaturesTab({
   character, 
   proficiencyBonus, 
   abilityModifiers,
+  effectiveMaxHP,
   usesState,
   poolState,
   expandedDescriptions,
@@ -4063,6 +4471,7 @@ function FeaturesTab({
             character={character}
             proficiencyBonus={proficiencyBonus}
             abilityModifiers={abilityModifiers}
+            effectiveMaxHP={effectiveMaxHP}
             onUsesChange={onUsesChange}
             usesState={usesState}
             poolState={poolState}
@@ -4080,6 +4489,7 @@ function FeaturesTab({
             character={character}
             proficiencyBonus={proficiencyBonus}
             abilityModifiers={abilityModifiers}
+            effectiveMaxHP={effectiveMaxHP}
             onUsesChange={onUsesChange}
             usesState={usesState}
             poolState={poolState}
@@ -4097,6 +4507,7 @@ function FeaturesTab({
             character={character}
             proficiencyBonus={proficiencyBonus}
             abilityModifiers={abilityModifiers}
+            effectiveMaxHP={effectiveMaxHP}
             onUsesChange={onUsesChange}
             usesState={usesState}
             poolState={poolState}
@@ -4115,7 +4526,7 @@ function FeaturesTab({
 }
 
 // Feature Subtab: Class Features
-function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
+function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, effectiveMaxHP, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (feature) => {
     return typeof feature.source === 'object' && feature.source?.source;
@@ -4181,6 +4592,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
               const featureLevel = getSourceLevel(feature);
               const featureId = feature.id || `subclass-${feature.name || idx}`;
               const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              const featureGauge = getFeatureGauge(feature, character.level, abilityModifiers, effectiveMaxHP);
               return (
                 <div
                   key={idx}
@@ -4194,7 +4606,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                     <h3 className="feature-name">{feature.name}</h3>
                     {featureLevel && <span className="feature-source">{sourceDisplay} — {featureLevel}</span>}
                   </div>
-                  {feature.max_uses && (
+                  {(
                     <FeatureUsesTracker 
                       maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                       featureId={featureId}
@@ -4209,6 +4621,14 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       poolName={featurePool.name}
                       storedValue={poolState[`${featureId}-pool`]}
                       onPoolChange={onPoolChange}
+                    />
+                  )}
+                  {featureGauge && (
+                    <FeatureGaugeTracker
+                      gauge={featureGauge}
+                      featureId={`${featureId}-gauge`}
+                      storedState={poolState[`${featureId}-gauge`]}
+                      onGaugeChange={onPoolChange}
                     />
                   )}
                   <FeatureSelectControl
@@ -4248,6 +4668,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
               const featureLevel = getSourceLevel(feature);
               const featureId = feature.id || `invocation-${feature.name || idx}`;
               const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              const featureGauge = getFeatureGauge(feature, character.level, abilityModifiers, effectiveMaxHP);
               return (
                 <div
                   key={idx}
@@ -4261,7 +4682,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                     <h3 className="feature-name">{feature.name}</h3>
                     {featureLevel && <span className="feature-source">{sourceDisplay} — {featureLevel}</span>}
                   </div>
-                  {feature.max_uses && (
+                  {(
                     <FeatureUsesTracker 
                       maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                       featureId={featureId}
@@ -4276,6 +4697,14 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       poolName={featurePool.name}
                       storedValue={poolState[`${featureId}-pool`]}
                       onPoolChange={onPoolChange}
+                    />
+                  )}
+                  {featureGauge && (
+                    <FeatureGaugeTracker
+                      gauge={featureGauge}
+                      featureId={`${featureId}-gauge`}
+                      storedState={poolState[`${featureId}-gauge`]}
+                      onGaugeChange={onPoolChange}
                     />
                   )}
                   <FeatureSelectControl
@@ -4315,6 +4744,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
               const featureLevel = getSourceLevel(feature);
               const featureId = feature.id || `fighting-${feature.name || idx}`;
               const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              const featureGauge = getFeatureGauge(feature, character.level, abilityModifiers, effectiveMaxHP);
               return (
                 <div
                   key={idx}
@@ -4328,7 +4758,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                     <h3 className="feature-name">{feature.name}</h3>
                     {featureLevel && <span className="feature-source">{sourceDisplay} — {featureLevel}</span>}
                   </div>
-                  {feature.max_uses && (
+                  {(
                     <FeatureUsesTracker 
                       maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                       featureId={featureId}
@@ -4343,6 +4773,14 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       poolName={featurePool.name}
                       storedValue={poolState[`${featureId}-pool`]}
                       onPoolChange={onPoolChange}
+                    />
+                  )}
+                  {featureGauge && (
+                    <FeatureGaugeTracker
+                      gauge={featureGauge}
+                      featureId={`${featureId}-gauge`}
+                      storedState={poolState[`${featureId}-gauge`]}
+                      onGaugeChange={onPoolChange}
                     />
                   )}
                   <FeatureSelectControl
@@ -4381,6 +4819,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
               const featureLevel = getSourceLevel(feature);
               const featureId = feature.id || `divinity-${feature.name || idx}`;
               const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              const featureGauge = getFeatureGauge(feature, character.level, abilityModifiers, effectiveMaxHP);
               return (
                 <div
                   key={idx}
@@ -4394,7 +4833,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                     <h3 className="feature-name">{feature.name}</h3>
                     {featureLevel && <span className="feature-source">{featureLevel}</span>}
                   </div>
-                  {feature.max_uses && (
+                  {(
                     <FeatureUsesTracker
                       maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                       featureId={featureId}
@@ -4409,6 +4848,14 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       poolName={featurePool.name}
                       storedValue={poolState[`${featureId}-pool`]}
                       onPoolChange={onPoolChange}
+                    />
+                  )}
+                  {featureGauge && (
+                    <FeatureGaugeTracker
+                      gauge={featureGauge}
+                      featureId={`${featureId}-gauge`}
+                      storedState={poolState[`${featureId}-gauge`]}
+                      onGaugeChange={onPoolChange}
                     />
                   )}
                   {feature.description && (
@@ -4436,6 +4883,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
               const featureLevel = getSourceLevel(feature);
               const featureId = feature.id || `class-${feature.name || idx}`;
               const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              const featureGauge = getFeatureGauge(feature, character.level, abilityModifiers, effectiveMaxHP);
               return (
                 <div
                   key={idx}
@@ -4449,7 +4897,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                     <h3 className="feature-name">{feature.name}</h3>
                     {featureLevel && <span className="feature-source">{sourceDisplay} — {featureLevel}</span>}
                   </div>
-                  {feature.max_uses && (
+                  {(
                     <FeatureUsesTracker 
                       maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                       featureId={featureId}
@@ -4464,6 +4912,14 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
                       poolName={featurePool.name}
                       storedValue={poolState[`${featureId}-pool`]}
                       onPoolChange={onPoolChange}
+                    />
+                  )}
+                  {featureGauge && (
+                    <FeatureGaugeTracker
+                      gauge={featureGauge}
+                      featureId={`${featureId}-gauge`}
+                      storedState={poolState[`${featureId}-gauge`]}
+                      onGaugeChange={onPoolChange}
                     />
                   )}
                   <FeatureSelectControl
@@ -4497,7 +4953,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, on
 }
 
 // Feature Subtab: Species Features
-function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
+function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, effectiveMaxHP, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (feature) => {
     return typeof feature.source === 'object' && feature.source?.source;
@@ -4569,6 +5025,7 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
         {nonCoreFeatures.map((feature, idx) => {
           const featureId = feature.id || `species-${feature.name || idx}`;
           const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+          const featureGauge = getFeatureGauge(feature, character.level, abilityModifiers, effectiveMaxHP);
           return (
           <div
             key={idx}
@@ -4581,7 +5038,7 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
             <div className="feature-header">
               <h3 className="feature-name">{feature.name}</h3>
             </div>
-            {feature.max_uses && (
+            {(
               <FeatureUsesTracker 
                 maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                 featureId={featureId}
@@ -4596,6 +5053,14 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
                 poolName={featurePool.name}
                 storedValue={poolState[`${featureId}-pool`]}
                 onPoolChange={onPoolChange}
+              />
+            )}
+            {featureGauge && (
+              <FeatureGaugeTracker
+                gauge={featureGauge}
+                featureId={`${featureId}-gauge`}
+                storedState={poolState[`${featureId}-gauge`]}
+                onGaugeChange={onPoolChange}
               />
             )}
             <FeatureSelectControl
@@ -4627,7 +5092,7 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
 }
 
 // Feature Subtab: Feats (includes background features)
-function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
+function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, effectiveMaxHP, onUsesChange, usesState, poolState, onPoolChange, expandedDescriptions, onDescriptionToggle, activeStances, onStanceChange, activeFeatureSelections, onFeatureSelectionChange }) {
   // Handle both old (string) and new (object) source formats
   const isNewSourceFormat = (item) => {
     return typeof item.source === 'object' && item.source?.source;
@@ -4670,7 +5135,7 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, onUsesChan
               <h3 className="feature-name">{feature.name}</h3>
               <span className="feature-source">Background</span>
             </div>
-            {feature.max_uses && (
+            {(
               <FeatureUsesTracker 
                 maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
                 featureId={featureId}
@@ -4812,6 +5277,7 @@ function HPEditModal({
   barrierCurrentTotal,
   barrierMaxTotal,
   onBarrierPoolChange,
+  onDamageTaken,
   deathSaveSuccesses,
   setDeathSaveSuccesses,
   deathSaveFailures,
@@ -4842,6 +5308,8 @@ function HPEditModal({
     const damageAmount = parseInt(damageInput);
     // Only allow positive integers
     if (!damageInput || isNaN(damageAmount) || damageAmount <= 0 || damageInput.includes('.') || damageInput.includes('-')) return;
+
+    onDamageTaken?.(damageAmount);
 
     let remainingDamage = damageAmount;
 
@@ -5150,6 +5618,7 @@ HPEditModal.propTypes = {
   barrierCurrentTotal: PropTypes.number.isRequired,
   barrierMaxTotal: PropTypes.number.isRequired,
   onBarrierPoolChange: PropTypes.func.isRequired,
+  onDamageTaken: PropTypes.func,
   deathSaveSuccesses: PropTypes.number.isRequired,
   setDeathSaveSuccesses: PropTypes.func.isRequired,
   deathSaveFailures: PropTypes.number.isRequired,

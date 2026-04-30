@@ -325,21 +325,42 @@ Benefits are stored as a JSON array of benefit objects. Each benefit represents 
   - `range`: short range label for UI
   - `target`: target summary for UI
 
-- **feature_die**: Declares a named feature die with scaling
+- **feature_die**: Declares a named feature die with scaling, including optional use count logic
   ```json
   {
     "type": "feature_die",
     "name": "Bardic Inspiration",
     "die": "d6",
-    "scaling": {
+    "level_scaling": {
       "5": "d8",
       "10": "d10",
       "15": "d12"
-    }
+    },
+    "value": "formula",
+    "formula": "2*proficiency"
   }
   ```
   - `die`: starting die size
-  - `scaling`: map of character level to die size
+  - `level_scaling` (`scaling` also accepted): map of level to die size
+  - Optional count fields for uses tracker: `max_uses`, `max`, `uses`, `count`, or `value`
+  - If `value = "formula"`, uses are resolved from `formula`
+  - `use_scaling` may be used for level-threshold uses (e.g., `{ "1": 2, "10": 3 }`)
+
+- **gauge**: Declares a damage-fed gauge tracker with charge thresholds
+  ```json
+  {
+    "type": "gauge",
+    "name": "Limit Gauge",
+    "threshold": "half_hp_max",
+    "max_charges": 3,
+    "timeout_seconds": 60,
+    "auto_fill_on_damage": true
+  }
+  ```
+  - `threshold`: number, `half_hp_max`, or `formula`
+  - `max_charges` (`charge_max` accepted): charge cap
+  - `timeout_seconds` (`reset_after_seconds` / `decay_seconds` accepted): inactivity reset timer
+  - `auto_fill_on_damage`: when true, HP modal damage adds to the gauge automatically
 
 **Description Column Format:**
 

@@ -498,7 +498,10 @@ export const useCharacter = ({ user, isAdmin }) => {
   const refetchSpells = async () => {
     if (!selectedCharacterId) return;
     try {
-      const data = await fetchCharacterSpellsWithFallback(selectedCharacterId);
+      const [data, inventoryData] = await Promise.all([
+        fetchCharacterSpellsWithFallback(selectedCharacterId),
+        fetchInventoryWithMagicEquipment(selectedCharacterId)
+      ]);
       const dataWithSummons = await hydrateSpellSummons(data);
 
       const mergedSpells = await mergeFeatGrantedSpells(
@@ -514,12 +517,13 @@ export const useCharacter = ({ user, isAdmin }) => {
       );
       const mergedWithItemGrants = await mergeMagicItemGrantedSpells(
         mergedWithFeatureGrants,
-        character?.inventory || [],
+        inventoryData || [],
         selectedCharacterId
       );
       
       setCharacter((prev) => (prev ? {
         ...prev,
+        inventory: inventoryData || prev.inventory,
         spells: mergedWithItemGrants
       } : null));
     } catch (err) {
