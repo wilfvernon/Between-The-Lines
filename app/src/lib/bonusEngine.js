@@ -700,6 +700,90 @@ const benefitHandlers = {
   },
 
   /**
+   * spell_modifier: Adds a modifier to spell damage rolls
+   * Structure: 
+   *  - { type: "spell_modifier", spells: ["Spiritual Weapon", "Cloud of Daggers"], modifier: "charisma_modifier" }
+   *  - { type: "spell_modifier", spells: ["Eldritch Blast"], add_modifier: true } (uses spellcasting ability)
+   */
+  spell_modifier: (benefit, baseCharacterData = {}, source) => {
+    if (!Array.isArray(benefit.spells) || benefit.spells.length === 0) return [];
+
+    let modifierValue = 0;
+
+    if (benefit.add_modifier === true) {
+      // Use spellcasting ability modifier
+      const spellcastingAbility = baseCharacterData.spellcasting_ability;
+      if (spellcastingAbility) {
+        const normalizedAbility = normalizeAbilityReference(spellcastingAbility);
+        if (normalizedAbility) {
+          const abilityScore = baseCharacterData[normalizedAbility] || 10;
+          modifierValue = abilityModifier(abilityScore);
+        }
+      }
+    } else if (typeof benefit.modifier === 'string' && benefit.modifier.trim()) {
+      // Use explicit modifier source
+      modifierValue = resolveModifierValue(benefit.modifier, baseCharacterData);
+    }
+
+    if (modifierValue === 0) return [];
+
+    // Create bonuses for each spell
+    const bonuses = benefit.spells.map(spellName => ({
+      target: `spell.${spellName}`,
+      value: modifierValue,
+      type: 'untyped',
+      source
+    }));
+    
+    return bonuses;
+  },
+
+  /**
+   * spell_damage_bonus: Adds a flat bonus to spell damage rolls
+   * Structure: 
+   *  - { type: "spell_damage_bonus", spells: ["Fireball", "Magic Missile"], amount: 3 }
+   *  - { type: "spell_damage_bonus", spells: ["Eldritch Blast"], modifier: "charisma_modifier" }
+   *  - { type: "spell_damage_bonus", spells: ["Eldritch Blast"], add_modifier: true } (uses spellcasting ability)
+   */
+  spell_damage_bonus: (benefit, baseCharacterData = {}, source) => {
+    if (!Array.isArray(benefit.spells) || benefit.spells.length === 0) return [];
+
+    let bonusValue = 0;
+
+    // Try numeric amount first
+    if (typeof benefit.amount === 'number') {
+      bonusValue = benefit.amount;
+    }
+    // Then try add_modifier (uses spellcasting ability)
+    else if (benefit.add_modifier === true) {
+      const spellcastingAbility = baseCharacterData.spellcasting_ability;
+      if (spellcastingAbility) {
+        const normalizedAbility = normalizeAbilityReference(spellcastingAbility);
+        if (normalizedAbility) {
+          const abilityScore = baseCharacterData[normalizedAbility] || 10;
+          bonusValue = abilityModifier(abilityScore);
+        }
+      }
+    }
+    // Or explicit modifier source
+    else if (typeof benefit.modifier === 'string' && benefit.modifier.trim()) {
+      bonusValue = resolveModifierValue(benefit.modifier, baseCharacterData);
+    }
+
+    if (bonusValue === 0) return [];
+
+    // Create bonuses for each spell
+    const bonuses = benefit.spells.map(spellName => ({
+      target: `spell.${spellName}`,
+      value: bonusValue,
+      type: 'untyped',
+      source
+    }));
+    
+    return bonuses;
+  },
+
+  /**
    * sense: Grants or improves a sense range
    * Structure: { type: "sense", sense: "Darkvision", range: "60ft." }
    */
@@ -954,6 +1038,7 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     saves: {},
     speeds: {},
     senses: {},
+    spells: {},
     damageResistances: {},
     damageImmunities: {},
     conditionResistances: {},
@@ -975,6 +1060,7 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     saves: {},
     speeds: {},
     senses: {},
+    spells: {},
     damageResistances: {},
     damageImmunities: {},
     conditionResistances: {},
@@ -1055,6 +1141,13 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
       const save = bonus.target.replace('save.', '');
       totals.saves[save] = (totals.saves[save] || 0) + bonus.value;
       sources.saves[save] = [...(sources.saves[save] || []), bonus];
+      return;
+    }
+
+    if (bonus.target.startsWith('spell.')) {
+      const spell = bonus.target.replace('spell.', '');
+      totals.spells[spell] = (totals.spells[spell] || 0) + bonus.value;
+      sources.spells[spell] = [...(sources.spells[spell] || []), bonus];
       return;
     }
 

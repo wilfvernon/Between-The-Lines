@@ -994,6 +994,7 @@ export default function ActionsTab({
   character, 
   proficiencyBonus, 
   derivedMods, 
+  statsTotals = {},
   allBonuses = [],
   setSelectedItem,
   usesState = {},
@@ -2182,6 +2183,7 @@ export default function ActionsTab({
                     // Render spell using shared SpellRow component
                     const cs = item.data;
                     const spell = cs.spell;
+                    const spellDamageBonus = statsTotals.spells?.[spell.name] || 0;
                     
                     return (
                       <SpellRow
@@ -2191,6 +2193,7 @@ export default function ActionsTab({
                         spellAttackBonus={spellAttackBonus}
                         spellSaveDC={spellSaveDC}
                         spellAbilityMod={spellAbilityMod}
+                        spellDamageBonus={spellDamageBonus}
                         onSpellClick={() => {
                           setSelectedSpell(spell);
                           setIsSpellModalOpen(true);
@@ -2253,6 +2256,7 @@ export default function ActionsTab({
                     // Render spell using shared SpellRow component
                     const cs = item.data;
                     const spell = cs.spell;
+                    const spellDamageBonus = statsTotals.spells?.[spell.name] || 0;
                     
                     return (
                       <SpellRow
@@ -2262,6 +2266,7 @@ export default function ActionsTab({
                         spellAttackBonus={spellAttackBonus}
                         spellSaveDC={spellSaveDC}
                         spellAbilityMod={spellAbilityMod}
+                        spellDamageBonus={spellDamageBonus}
                         onSpellClick={() => {
                           setSelectedSpell(spell);
                           setIsSpellModalOpen(true);

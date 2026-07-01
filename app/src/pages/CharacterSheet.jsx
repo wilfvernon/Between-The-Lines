@@ -1799,11 +1799,39 @@ function CharacterSheet() {
 
   // Collect bonuses from items, features, and character overrides
   // (Skill bonuses are now handled directly in SkillsTab from feature.benefits)
+  
+  // Apply ASI improvements to baseAbilities FIRST, so feature benefits see final ability scores
+  const abilityAbbrevToLower = {
+    'STR': 'strength',
+    'DEX': 'dexterity',
+    'CON': 'constitution',
+    'INT': 'intelligence',
+    'WIS': 'wisdom',
+    'CHA': 'charisma'
+  };
+
+  const abilityScoresWithASI = {
+    ...baseAbilities
+  };
+  
+  allAbilityImprovements.forEach(improvement => {
+    (improvement.abilities || []).forEach(abilityStr => {
+      // Parse "CHA: 2" or "WIS: 1"
+      const [abbr, valueStr] = abilityStr.split(':').map(s => s.trim());
+      const ability = abilityAbbrevToLower[abbr.toUpperCase()];
+      const value = parseInt(valueStr, 10);
+
+      if (ability && !isNaN(value)) {
+        abilityScoresWithASI[ability] = (abilityScoresWithASI[ability] || 10) + value;
+      }
+    });
+  });
+
   const bonusList = collectBonuses({
     items: [...visibleCharacterItems, ...activeMagicItems],
     features: featuresToProcess,
     baseCharacterData: {
-      ...baseAbilities,
+      ...abilityScoresWithASI,
       level: Math.max(1, Number(character?.level) || 1),
       classes: Array.isArray(character?.classes) ? character.classes : [],
       proficiency: proficiencyBonus,
@@ -2279,12 +2307,15 @@ function CharacterSheet() {
               skills={skills}
               derivedStats={derivedStats}
               statsTotals={statsTotals}
+              derivedMods={derivedMods}
               allBonuses={allBonuses}
               getAbilityBonuses={getAbilityBonuses}
               inspectorState={inspectorState}
               setInspectorState={setInspectorState}
               baseAbilities={baseAbilities}
               saveAdvantages={derivedStats?.advantages?.saves || {}}
+              features={featuresToProcess}
+              skillAdvantages={derivedStats?.advantages?.skills || {}}
             />
           </div>
           <div className="tab-pane">
@@ -2304,6 +2335,7 @@ function CharacterSheet() {
               character={character} 
               proficiencyBonus={proficiencyBonus}
               derivedMods={derivedMods}
+              statsTotals={statsTotals}
               allBonuses={allBonuses}
               setSelectedItem={setSelectedItem}
               usesState={usesState}
@@ -2325,6 +2357,7 @@ function CharacterSheet() {
               loading={relatedLoading}
               proficiencyBonus={proficiencyBonus}
               derivedMods={derivedMods}
+              statsTotals={statsTotals}
               onSpellsUpdate={refetchSpells}
               spellUses={spellUses}
               onSpellUsesChange={handleSpellUsesChange}
@@ -5235,7 +5268,13 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, effectiveM
   const backgroundFeatures = character.features?.filter(f => getSourceType(f) === 'background') || [];
   const feats = character.feats || [];
   
-  if (backgroundFeatures.length === 0 && feats.length === 0) {
+  // Extract ability score improvements with source 'Level' and render as feat cards
+  const levelASIs = (character.ability_score_improvements || []).filter(asi => {
+    const normalizedSource = String(asi.source || '').toLowerCase().trim();
+    return normalizedSource === 'level';
+  });
+  
+  if (backgroundFeatures.length === 0 && feats.length === 0 && levelASIs.length === 0) {
     return (
       <div className="feats">
         <p className="info-text">No feats or background features found.</p>
@@ -5302,6 +5341,59 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, effectiveM
             )}
           </div>
         );
+        })}
+        
+        {/* Ability Score Improvements from Level */}
+        {levelASIs.map((asi, idx) => {
+          const asiId = `level-asi-${idx}`;
+          
+          // Parse abilities: "STR: 2" -> { code: "STR", amount: 2 }
+          const parseAbility = (abilityStr) => {
+            const match = String(abilityStr || '').match(/^([A-Za-z]+):\s*(\d+)$/);
+            if (!match) return null;
+            return { code: match[1].toUpperCase(), amount: parseInt(match[2], 10) };
+          };
+          
+          // Map ability codes to full names
+          const abilityNames = {
+            STR: 'Strength',
+            DEX: 'Dexterity',
+            CON: 'Constitution',
+            INT: 'Intelligence',
+            WIS: 'Wisdom',
+            CHA: 'Charisma'
+          };
+          
+          // Build description: "Increase Strength by 2, Increase Constitution by 1."
+          const increases = (asi.abilities || [])
+            .map(parseAbility)
+            .filter(Boolean)
+            .map(({ code, amount }) => `Increase ${abilityNames[code] || code} by ${amount}`)
+            .join(', ') + '.';
+          
+          return (
+            <div
+              key={`level-asi-${idx}`}
+              className="feature-item"
+              onClick={(event) => {
+                if (isFeatureToggleIgnored(event.target)) return;
+                onDescriptionToggle(asiId);
+              }}
+            >
+              <div className="feature-header">
+                <h3 className="feature-name">Ability Score Improvement</h3>
+                <span className="feature-source">CLASS (Level {asi.level ?? character.level})</span>
+              </div>
+              {increases && (
+                <FeatureDescriptionBlock
+                  featureId={asiId}
+                  description={increases}
+                  expanded={!!expandedDescriptions[asiId]}
+                  onToggle={onDescriptionToggle}
+                />
+              )}
+            </div>
+          );
         })}
         
         {/* Feats */}

@@ -4,7 +4,7 @@ import PropTypes from 'prop-types';
 import { renderSpellDescription } from '../lib/spellUtils.jsx';
 import './SpellDetailModal.css';
 
-function SpellDetailModal({ spell, isOpen, onClose, spellAttackBonus, spellSaveDC, spellAbilityMod }) {
+function SpellDetailModal({ spell, isOpen, onClose, spellAttackBonus, spellSaveDC, spellAbilityMod, spellDamageBonus = 0 }) {
   useEffect(() => {
     if (!isOpen) return undefined;
 
@@ -50,8 +50,8 @@ function SpellDetailModal({ spell, isOpen, onClose, spellAttackBonus, spellSaveD
   const modifierCount = Number.isFinite(explicitModifierCount)
     ? Math.max(0, explicitModifierCount)
     : (spell.add_modifier ? 1 : 0);
-  const totalModifier = spellAbilityMod * modifierCount;
-  const hasModifierDamage = modifierCount > 0;
+  const totalModifier = spellAbilityMod * modifierCount + spellDamageBonus;
+  const hasModifierDamage = modifierCount > 0 || spellDamageBonus !== 0;
 
   // Build damage display with additive modifier stacking
   const diceValue = spell.dice?.[0];
@@ -207,6 +207,7 @@ SpellDetailModal.propTypes = {
   spellAttackBonus: PropTypes.number,
   spellSaveDC: PropTypes.number,
   spellAbilityMod: PropTypes.number,
+  spellDamageBonus: PropTypes.number,
 };
 
 export default SpellDetailModal;

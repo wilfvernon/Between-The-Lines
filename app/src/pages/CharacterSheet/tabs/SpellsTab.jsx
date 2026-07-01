@@ -147,7 +147,7 @@ const ROMAN_BY_LEVEL = {
   9: 'IX'
 };
 
-export default function SpellsTab({ character, spells, loading, proficiencyBonus, derivedMods, onSpellsUpdate, spellUses, onSpellUsesChange, longRestVersion = 0 }) {
+export default function SpellsTab({ character, spells, loading, proficiencyBonus, derivedMods, statsTotals = {}, onSpellsUpdate, spellUses, onSpellUsesChange, longRestVersion = 0 }) {
   const [activeSubtab, setActiveSubtab] = useState('cantrips');
   const [selectedSpell, setSelectedSpell] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -709,6 +709,7 @@ export default function SpellsTab({ character, spells, loading, proficiencyBonus
 
                 const castLevel = cs.castLevel ?? spell.level;
                 const diceValue = getSpellDice(spell, castLevel);
+                const spellDamageBonus = statsTotals.spells?.[spell.name] || 0;
                 // Create modified spell with correct dice for this cast level
                 const spellWithDice = {
                   ...spell,
@@ -723,6 +724,7 @@ export default function SpellsTab({ character, spells, loading, proficiencyBonus
                     spellAttackBonus={spellAttackBonus}
                     spellSaveDC={spellSaveDC}
                     spellAbilityMod={spellAbilityMod}
+                    spellDamageBonus={spellDamageBonus}
                     equippedWeapon={equippedWeapon}
                     onSpellClick={() => {
                       setSelectedSpell(spell);
@@ -743,14 +745,20 @@ export default function SpellsTab({ character, spells, loading, proficiencyBonus
         </>
       )}
 
-        <SpellDetailModal
-          spell={selectedSpell}
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          spellAttackBonus={spellAttackBonus}
-          spellSaveDC={spellSaveDC}
-          spellAbilityMod={spellAbilityMod}
-        />
+        {(() => {
+          const spellDamageBonus = selectedSpell ? (statsTotals.spells?.[selectedSpell.name] || 0) : 0;
+          return (
+            <SpellDetailModal
+              spell={selectedSpell}
+              isOpen={isModalOpen}
+              onClose={() => setIsModalOpen(false)}
+              spellAttackBonus={spellAttackBonus}
+              spellSaveDC={spellSaveDC}
+              spellAbilityMod={spellAbilityMod}
+              spellDamageBonus={spellDamageBonus}
+            />
+          );
+        })()}
 
         <SpellPreparationModal
           character={character}

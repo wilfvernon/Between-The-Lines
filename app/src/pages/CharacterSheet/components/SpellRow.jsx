@@ -3,6 +3,7 @@ import { parseCastingTime } from '../../../lib/spellUtils.jsx';
 
 // Import spell icons
 import ritualIcon from '../../../assets/icons/spell/ritual.svg';
+import concentrationIcon from '../../../assets/icons/spell/concentration.svg';
 import meleeIcon from '../../../assets/icons/combat/melee.svg';
 import itemGrantedIcon from '../../../assets/icons/entity/magic-item.svg';
 
@@ -38,6 +39,7 @@ export default function SpellRow({
   spellAttackBonus = 0,
   spellSaveDC = 0,
   spellAbilityMod = 0,
+  spellDamageBonus = 0,
   equippedWeapon = null,
   onSpellClick = null,
   className = '',
@@ -77,8 +79,8 @@ export default function SpellRow({
   const modifierCount = Number.isFinite(explicitModifierCount)
     ? Math.max(0, explicitModifierCount)
     : (spell.add_modifier ? 1 : 0);
-  const totalModifier = spellAbilityMod * modifierCount;
-  const hasModifierDamage = modifierCount > 0;
+  const totalModifier = spellAbilityMod * modifierCount + spellDamageBonus;
+  const hasModifierDamage = modifierCount > 0 || spellDamageBonus !== 0;
 
   if (diceValue?.startsWith('Weapon') && equippedWeapon) {
     // Weapon-based damage
@@ -161,6 +163,8 @@ export default function SpellRow({
 
   const displayCastingTime = castingTimeDisplay || formatCastingTime(spell.casting_time);
   const isRitual = showRitual && parseCastingTime(spell.casting_time).isRitual;
+  const requiresConcentration = spell.duration && typeof spell.duration === 'string' && 
+    spell.duration.toLowerCase().includes('concentration');
   const alwaysPrepared = showAlwaysPrepared && castingSpellData.always_prepared;
   const isUpcast = showUpcast && castingSpellData.isUpcast;
   const isRitualOnly = showRitualOnly && !castingSpellData.is_prepared && !castingSpellData.always_prepared && !!castingSpellData.ritual_only;
@@ -189,6 +193,14 @@ export default function SpellRow({
               alt="Ritual"
               className="spell-ritual-badge"
               title="Ritual"
+            />
+          )}
+          {requiresConcentration && (
+            <img
+              src={concentrationIcon}
+              alt="Concentration"
+              className="spell-ritual-badge"
+              title="Requires Concentration"
             />
           )}
           {isItemGranted && (

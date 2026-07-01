@@ -146,15 +146,16 @@ export default function SkillsTab({ character, proficiencyBonus, skills: charact
             skillExpertiseFromFeatures.add(skillKey);
           });
           
-          // Check level_scaling for additional skills at higher levels
-          if (benefit.level_scaling && typeof benefit.level_scaling === 'object') {
+          // Check level_scaling or scaling for additional skills at higher levels
+          const scalingMap = benefit.level_scaling || benefit.scaling;
+          if (scalingMap && typeof scalingMap === 'object') {
             const currentLevel = getFeatureLevel(feature);
             
-            // Check each level threshold in level_scaling
-            Object.keys(benefit.level_scaling).forEach(levelThreshold => {
+            // Check each level threshold in scaling
+            Object.keys(scalingMap).forEach(levelThreshold => {
               const threshold = parseInt(levelThreshold, 10);
               if (!isNaN(threshold) && currentLevel >= threshold) {
-                const scalingData = benefit.level_scaling[levelThreshold];
+                const scalingData = scalingMap[levelThreshold];
                 if (scalingData?.skills && Array.isArray(scalingData.skills)) {
                   scalingData.skills.forEach(skillName => {
                     const skillKey = skillName.toLowerCase().replace(/[\s']/g, '_');
