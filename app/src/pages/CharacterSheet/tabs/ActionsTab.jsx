@@ -619,7 +619,7 @@ function resolveSneakDamageDisplay(feature, character, derivedMods = null, dieOv
 }
 
 // Helper function for weapon proficiency
-function isWeaponProficient(weapon, character) {
+function isWeaponProficient(weapon, character, effectivePropertyNames = null) {
   if (!weapon || !character) return false;
 
   const normalizeToken = (value) => String(value || '')
@@ -692,11 +692,13 @@ function isWeaponProficient(weapon, character) {
   const hasMonk = classNames.includes('Monk');
   
   if (hasRogue || hasMonk) {
-    const properties = weapon.raw_data?.properties || [];
-    const propertyNames = properties.map(p => p.name || p);
-    
-    const hasLight = propertyNames.includes('Light');
-    const hasFinesse = propertyNames.includes('Finesse');
+    const properties = Array.isArray(effectivePropertyNames) && effectivePropertyNames.length > 0
+      ? effectivePropertyNames
+      : (weapon.raw_data?.properties || []).map((p) => p.name || p);
+    const normalizedPropertyNames = new Set(properties.map(normalizePropertyName));
+
+    const hasLight = normalizedPropertyNames.has('light');
+    const hasFinesse = normalizedPropertyNames.has('finesse');
     
     // Monk: proficient with Light Martial weapons
     if (hasMonk && hasLight) return true;
@@ -722,6 +724,96 @@ function parseNumericBonus(value) {
   return 0;
 }
 
+function normalizeAbilityOverride(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!normalized) return null;
+
+  const aliases = {
+    str: 'strength',
+    dex: 'dexterity',
+    con: 'constitution',
+    int: 'intelligence',
+    wis: 'wisdom',
+    cha: 'charisma',
+    finesse: 'finesse',
+    dex_or_str: 'finesse',
+    str_or_dex: 'finesse',
+    strength_or_dexterity: 'finesse',
+    dexterity_or_strength: 'finesse',
+    spellcasting: 'spellcasting',
+    spellcasting_mod: 'spellcasting',
+    spellcasting_modifier: 'spellcasting',
+    spell_mod: 'spellcasting'
+  };
+
+  return aliases[normalized] || normalized;
+}
+
+function toPropertyLabel(token) {
+  const normalized = normalizePropertyName(token);
+  if (!normalized) return '';
+
+  const labels = {
+    two_handed: 'Two-Handed',
+    ammunition: 'Ammunition',
+    finesse: 'Finesse',
+    heavy: 'Heavy',
+    light: 'Light',
+    loading: 'Loading',
+    reach: 'Reach',
+    special: 'Special',
+    thrown: 'Thrown',
+    versatile: 'Versatile'
+  };
+
+  if (labels[normalized]) return labels[normalized];
+
+  return normalized
+    .split('_')
+    .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part)
+    .join(' ');
+}
+
+function getSpellcastingAbilityMod(character, derivedMods) {
+  if (!character?.classes || !derivedMods) return 0;
+
+  const classNames = character.classes.map(c => c.definition?.name || c.class || '');
+  const isWisdomCaster = classNames.some(name => ['Cleric', 'Druid', 'Ranger'].includes(name));
+  const isCharismaCaster = classNames.some(name => ['Bard', 'Paladin', 'Sorcerer', 'Warlock'].includes(name));
+
+  if (isWisdomCaster) return derivedMods.wisdom || 0;
+  if (isCharismaCaster) return derivedMods.charisma || 0;
+  return derivedMods.intelligence || 0;
+}
+
+function resolveWeaponAttackAbility({
+  hasFinesse,
+  isRanged,
+  derivedMods,
+  attackAbilityOverride
+}) {
+  const normalizedOverride = normalizeAbilityOverride(attackAbilityOverride);
+
+  if (normalizedOverride === 'finesse') {
+    return (derivedMods.dexterity || 0) >= (derivedMods.strength || 0) ? 'dexterity' : 'strength';
+  }
+
+  if (normalizedOverride === 'spellcasting') {
+    return 'spellcasting';
+  }
+
+  if (normalizedOverride && Number.isFinite(derivedMods?.[normalizedOverride])) {
+    return normalizedOverride;
+  }
+
+  if (hasFinesse) {
+    return (derivedMods.dexterity || 0) >= (derivedMods.strength || 0) ? 'dexterity' : 'strength';
+  }
+
+  if (isRanged) return 'dexterity';
+  return 'strength';
+}
+
 function isTruthyFlag(value) {
   if (value === true) return true;
   if (typeof value === 'number') return value === 1;
@@ -742,6 +834,9 @@ function getMagicWeaponModifiers(inventoryItem) {
       baseDamageOverride: null,
       damageTypeOverride: null,
       versatileDamageOverride: null,
+      attackAbilityOverride: null,
+      addedProperties: [],
+      removedProperties: [],
       ignoreDamageModifier: false,
     };
   }
@@ -757,7 +852,72 @@ function getMagicWeaponModifiers(inventoryItem) {
   let baseDamageOverride = null;
   let damageTypeOverride = null;
   let versatileDamageOverride = null;
+  let attackAbilityOverride = null;
+  const addedProperties = new Set();
+  const removedProperties = new Set();
   let ignoreDamageModifier = false;
+
+  const addProperty = (value) => {
+    const normalized = normalizePropertyName(value);
+    if (!normalized) return;
+    removedProperties.delete(normalized);
+    addedProperties.add(normalized);
+  };
+
+  const removeProperty = (value) => {
+    const normalized = normalizePropertyName(value);
+    if (!normalized) return;
+    addedProperties.delete(normalized);
+    removedProperties.add(normalized);
+  };
+
+  const addPropertyList = (values, applyFn) => {
+    if (!values) return;
+    if (Array.isArray(values)) {
+      values.forEach((entry) => applyFn(entry));
+      return;
+    }
+    if (typeof values === 'string') {
+      values.split(',').map((part) => part.trim()).filter(Boolean).forEach((entry) => applyFn(entry));
+    }
+  };
+
+  const applyPropertyChanges = (benefit) => {
+    addPropertyList(benefit?.add_properties, addProperty);
+    addPropertyList(benefit?.properties_add, addProperty);
+    addPropertyList(benefit?.grant_properties, addProperty);
+    addPropertyList(benefit?.remove_properties, removeProperty);
+    addPropertyList(benefit?.properties_remove, removeProperty);
+
+    if (isTruthyFlag(benefit?.finesse)) addProperty('finesse');
+    if (isTruthyFlag(benefit?.remove_finesse)) removeProperty('finesse');
+
+    const weaponProperties = benefit?.weapon_properties;
+    if (Array.isArray(weaponProperties)) {
+      addPropertyList(weaponProperties, addProperty);
+    } else if (weaponProperties && typeof weaponProperties === 'object') {
+      addPropertyList(weaponProperties.add, addProperty);
+      addPropertyList(weaponProperties.remove, removeProperty);
+    }
+
+    if (isTruthyFlag(benefit?.grants_finesse)) addProperty('finesse');
+  };
+
+  const applyAbilityOverride = (benefit) => {
+    const candidate = normalizeAbilityOverride(
+      benefit?.ability_mod
+      ?? benefit?.ability_modifier
+      ?? benefit?.attack_ability
+      ?? benefit?.weapon_attack_ability
+      ?? benefit?.ability
+    );
+    if (!candidate) return;
+    attackAbilityOverride = candidate;
+
+    if (candidate === 'finesse') {
+      addProperty('finesse');
+    }
+  };
 
   const addExtraDamage = (benefit) => {
     const die = benefit?.die || benefit?.damage_dice || benefit?.dice;
@@ -772,6 +932,9 @@ function getMagicWeaponModifiers(inventoryItem) {
   benefits.forEach((benefit) => {
     const type = normalizeBenefitType(benefit?.type);
     const amount = parseNumericBonus(benefit?.amount ?? benefit?.value ?? benefit?.bonus);
+
+    applyPropertyChanges(benefit);
+    applyAbilityOverride(benefit);
 
     if (['ignore_damage_mod', 'ignore_damage_modifier', 'no_ability_mod_damage', 'no_ability_modifier_damage'].includes(type)) {
       ignoreDamageModifier = true;
@@ -894,6 +1057,29 @@ function getMagicWeaponModifiers(inventoryItem) {
     ignoreDamageModifier = true;
   }
 
+  const fallbackAbilityOverride = normalizeAbilityOverride(
+    magicItem?.attack_ability
+    ?? magicItem?.ability_mod
+    ?? magicItem?.ability_modifier
+    ?? magicItem?.raw_data?.attack_ability
+    ?? magicItem?.raw_data?.ability_mod
+    ?? magicItem?.raw_data?.ability_modifier
+    ?? magicItem?.properties?.attack_ability
+    ?? magicItem?.properties?.ability_mod
+    ?? magicItem?.properties?.ability_modifier
+  );
+  if (!attackAbilityOverride && fallbackAbilityOverride) {
+    attackAbilityOverride = fallbackAbilityOverride;
+    if (fallbackAbilityOverride === 'finesse') {
+      addProperty('finesse');
+    }
+  }
+
+  if (isTruthyFlag(magicItem?.finesse) || isTruthyFlag(magicItem?.properties?.finesse) || isTruthyFlag(magicItem?.raw_data?.finesse)) {
+    addProperty('finesse');
+    if (!attackAbilityOverride) attackAbilityOverride = 'finesse';
+  }
+
   return {
     attackBonus: attackBonus + enhancementBonus,
     damageBonus: damageBonus + enhancementBonus,
@@ -901,6 +1087,9 @@ function getMagicWeaponModifiers(inventoryItem) {
     baseDamageOverride,
     damageTypeOverride,
     versatileDamageOverride,
+    attackAbilityOverride,
+    addedProperties: Array.from(addedProperties),
+    removedProperties: Array.from(removedProperties),
     ignoreDamageModifier,
   };
 }
@@ -968,6 +1157,28 @@ function normalizePropertyName(value) {
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
+}
+
+function getEffectiveWeaponProperties(rawProperties = [], magicWeaponModifiers = null) {
+  const effectiveSet = new Set(
+    (rawProperties || [])
+      .map((property) => normalizePropertyName(property?.name || property))
+      .filter(Boolean)
+  );
+
+  (magicWeaponModifiers?.removedProperties || []).forEach((property) => {
+    const normalized = normalizePropertyName(property);
+    if (!normalized) return;
+    effectiveSet.delete(normalized);
+  });
+
+  (magicWeaponModifiers?.addedProperties || []).forEach((property) => {
+    const normalized = normalizePropertyName(property);
+    if (!normalized) return;
+    effectiveSet.add(normalized);
+  });
+
+  return Array.from(effectiveSet).map(toPropertyLabel);
 }
 
 // Helper to extract unlocked masteries from character features
@@ -1172,35 +1383,40 @@ export default function ActionsTab({
         const weapon = getInventoryWeaponData(item);
         const rawData = weapon.raw_data;
         
-        // Determine ability modifier for attack
+        const magicWeaponModifiers = getMagicWeaponModifiers(item);
+
+        // Determine effective properties (base equipment + magic item modifications)
         const properties = rawData?.properties || [];
-        const propertyNames = properties.map(p => p.name || p);
-        const hasFinesse = propertyNames.includes('Finesse');
-        const hasThrown = propertyNames.includes('Thrown');
+        const propertyNames = getEffectiveWeaponProperties(properties, magicWeaponModifiers);
+        const normalizedPropertyNames = new Set(propertyNames.map(normalizePropertyName));
+        const hasFinesse = normalizedPropertyNames.has('finesse');
+        const hasThrown = normalizedPropertyNames.has('thrown');
         const range = rawData?.range?.normal || 5;
         const longRange = rawData?.range?.long;
         const isRanged = range > 5 || longRange;
-        
-        // Choose ability: Finesse can use STR or DEX (use better), Ranged uses DEX, else STR
-        let abilityUsed = 'strength';
-        if (hasFinesse) {
-          abilityUsed = derivedMods.dexterity >= derivedMods.strength ? 'dexterity' : 'strength';
-        } else if (isRanged) {
-          abilityUsed = 'dexterity';
-        }
-        
-        const abilityMod = derivedMods[abilityUsed] || 0;
+
+        // Choose ability: supports magic item ability overrides (including finesse/spellcasting)
+        const abilityUsed = resolveWeaponAttackAbility({
+          hasFinesse,
+          isRanged,
+          derivedMods,
+          attackAbilityOverride: magicWeaponModifiers.attackAbilityOverride
+        });
+
+        const abilityMod = abilityUsed === 'spellcasting'
+          ? getSpellcastingAbilityMod(character, derivedMods)
+          : (derivedMods[abilityUsed] || 0);
         
         // Check weapon proficiency
-        const isProficient = isWeaponProficient(weapon, character);
+        const isProficient = isWeaponProficient(weapon, character, propertyNames);
         const profBonus = isProficient ? (proficiencyBonus || 0) : 0;
-        const magicWeaponModifiers = getMagicWeaponModifiers(item);
         
         // Calculate to-hit and damage bonuses
-        const meleeToHitOneHandBonus = getConditionalMeleeBonus('melee_weapon_attack', { properties: propertyNames, versatile: propertyNames.includes('Versatile'), isRanged }, 1);
-        const meleeToHitTwoHandBonus = getConditionalMeleeBonus('melee_weapon_attack', { properties: propertyNames, versatile: propertyNames.includes('Versatile'), isRanged }, 2);
-        const meleeDamageOneHandBonus = getConditionalMeleeBonus('melee_weapon_damage', { properties: propertyNames, versatile: propertyNames.includes('Versatile'), isRanged }, 1);
-        const meleeDamageTwoHandBonus = getConditionalMeleeBonus('melee_weapon_damage', { properties: propertyNames, versatile: propertyNames.includes('Versatile'), isRanged }, 2);
+        const hasVersatile = normalizedPropertyNames.has('versatile');
+        const meleeToHitOneHandBonus = getConditionalMeleeBonus('melee_weapon_attack', { properties: propertyNames, versatile: hasVersatile, isRanged }, 1);
+        const meleeToHitTwoHandBonus = getConditionalMeleeBonus('melee_weapon_attack', { properties: propertyNames, versatile: hasVersatile, isRanged }, 2);
+        const meleeDamageOneHandBonus = getConditionalMeleeBonus('melee_weapon_damage', { properties: propertyNames, versatile: hasVersatile, isRanged }, 1);
+        const meleeDamageTwoHandBonus = getConditionalMeleeBonus('melee_weapon_damage', { properties: propertyNames, versatile: hasVersatile, isRanged }, 2);
 
         const toHit = abilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitOneHandBonus;
         const toHitTwoHand = abilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitTwoHandBonus;
@@ -1213,7 +1429,6 @@ export default function ActionsTab({
         const damageType = (magicWeaponModifiers.damageTypeOverride || rawData?.damage?.damage_type?.name || 'bludgeoning').toLowerCase();
         
         // Versatile damage
-        const hasVersatile = propertyNames.includes('Versatile');
         const versatileDamage = magicWeaponModifiers.versatileDamageOverride || rawData?.two_handed_damage?.damage_dice;
         const showSplitToHit = hasVersatile && meleeToHitOneHandBonus !== meleeToHitTwoHandBonus;
         
@@ -1689,14 +1904,7 @@ export default function ActionsTab({
 
   // Calculate spell attack bonus and save DC (borrowed from SpellsTab logic)
   const spellAbilityMod = useMemo(() => {
-    if (!character?.classes || !derivedMods) return 0;
-    const classNames = character.classes.map(c => c.definition?.name || c.class || '');
-    const isWisdomCaster = classNames.some(name => ['Cleric', 'Druid', 'Ranger'].includes(name));
-    const isCharismaCaster = classNames.some(name => ['Bard', 'Paladin', 'Sorcerer', 'Warlock'].includes(name));
-    
-    if (isWisdomCaster) return derivedMods.wisdom || 0;
-    if (isCharismaCaster) return derivedMods.charisma || 0;
-    return derivedMods.intelligence || 0; // Default to INT (Wizard, Artificer)
+    return getSpellcastingAbilityMod(character, derivedMods);
   }, [character?.classes, derivedMods]);
 
   const spellcastingItemBonuses = useMemo(() => getMagicItemSpellcastingBonuses(character), [character?.inventory]);

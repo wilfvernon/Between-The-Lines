@@ -1,3 +1,5 @@
+import { buildSkillComputationContext, calculateSkillBonus } from '../utils/skillMath';
+
 export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod, wisMod, chaMod, proficiencyBonus, skills, derivedStats, allBonuses, getAbilityBonuses, inspectorState, setInspectorState, baseAbilities, saveAdvantages = {}, statsTotals = {}, derivedMods = {}, features = [], skillAdvantages = {} }) {
   // Helper to get custom modifier total for an ability
   const getCustomModifierTotal = (abilityKey) => {
@@ -68,120 +70,12 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
     });
   };
 
-  const normalizeSkillKey = (value) => String(value || '').toLowerCase().replace(/[\s']/g, '_').trim();
-
-  const skillLookup = (skills || []).reduce((acc, skill) => {
-    acc[skill.skill_name] = skill;
-    return acc;
-  }, {});
-
-  const abilityKeyToAbbrev = {
-    strength: 'STR',
-    dexterity: 'DEX',
-    constitution: 'CON',
-    intelligence: 'INT',
-    wisdom: 'WIS',
-    charisma: 'CHA'
-  };
-
-  // Build feature-derived skill data (same logic as SkillsTab)
-  const skillAdditionalAbilitiesMap = {};
-  const skillProficienciesFromFeatures = new Set();
-  const skillExpertiseFromFeatures = new Set();
-  let hasHalfProficiency = false;
-
-  const getFeatureLevel = (feature) => {
-    const source = feature.source;
-    if (source && typeof source === 'object' && source.class) {
-      const targetClass = source.class.toLowerCase();
-      const classEntry = character.classes?.find(c => 
-        (c.class || c.definition?.name || '').toLowerCase() === targetClass
-      );
-      if (classEntry) {
-        return classEntry.level || classEntry.definition?.level || 1;
-      }
-    }
-    return character.level || 1;
-  };
-
-  const normalizeBenefits = (rawBenefits) => {
-    if (Array.isArray(rawBenefits)) return rawBenefits;
-    if (rawBenefits && typeof rawBenefits === 'object') {
-      if (Array.isArray(rawBenefits.benefits)) return rawBenefits.benefits;
-      return rawBenefits.type ? [rawBenefits] : [];
-    }
-    if (typeof rawBenefits === 'string') {
-      try {
-        const parsed = JSON.parse(rawBenefits);
-        if (Array.isArray(parsed)) return parsed;
-        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.benefits)) return parsed.benefits;
-        return parsed && typeof parsed === 'object' && parsed.type ? [parsed] : [];
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  };
-
-  features.forEach(feature => {
-    const benefitsList = normalizeBenefits(feature.benefits);
-    if (benefitsList.length > 0) {
-      benefitsList.forEach(benefit => {
-        const benefitType = typeof benefit?.type === 'string' ? benefit.type.trim() : benefit?.type;
-        if (benefitType === 'skill_dual_ability' && Array.isArray(benefit.skills)) {
-          benefit.skills.forEach(skillName => {
-            const skillKey = normalizeSkillKey(skillName);
-            if (!skillAdditionalAbilitiesMap[skillKey]) {
-              skillAdditionalAbilitiesMap[skillKey] = [];
-            }
-            if (benefit.ability && !skillAdditionalAbilitiesMap[skillKey].includes(benefit.ability)) {
-              skillAdditionalAbilitiesMap[skillKey].push(benefit.ability);
-            }
-          });
-        } else if (benefitType === 'skill_proficiency' && Array.isArray(benefit.skills)) {
-          benefit.skills.forEach(skillName => {
-            const skillKey = normalizeSkillKey(skillName);
-            skillProficienciesFromFeatures.add(skillKey);
-          });
-        } else if (benefitType === 'skill_proficiency' && benefit.skill) {
-          const skillKey = normalizeSkillKey(benefit.skill);
-          skillProficienciesFromFeatures.add(skillKey);
-        } else if (benefitType === 'skill_expertise' && benefit.skills && Array.isArray(benefit.skills)) {
-          benefit.skills.forEach(skillName => {
-            const skillKey = normalizeSkillKey(skillName);
-            skillExpertiseFromFeatures.add(skillKey);
-          });
-          const scalingMap = benefit.level_scaling || benefit.scaling;
-          if (scalingMap && typeof scalingMap === 'object') {
-            const currentLevel = getFeatureLevel(feature);
-            Object.keys(scalingMap).forEach(levelThreshold => {
-              const threshold = parseInt(levelThreshold, 10);
-              if (!isNaN(threshold) && currentLevel >= threshold) {
-                const scalingData = scalingMap[levelThreshold];
-                if (scalingData?.skills && Array.isArray(scalingData.skills)) {
-                  scalingData.skills.forEach(skillName => {
-                    const skillKey = normalizeSkillKey(skillName);
-                    skillExpertiseFromFeatures.add(skillKey);
-                  });
-                }
-              }
-            });
-          }
-        } else if (benefitType === 'skill_half_proficiency') {
-          hasHalfProficiency = true;
-        }
-      });
-    }
+  const skillComputationContext = buildSkillComputationContext({
+    character,
+    characterSkills: skills,
+    features,
+    statsTotals
   });
-
-  // Normalize flat skill bonuses
-  const normalizedFlatSkillBonuses = Object.entries(statsTotals.skills || {}).reduce((acc, [rawKey, rawValue]) => {
-    const key = normalizeSkillKey(rawKey);
-    if (!key) return acc;
-    const value = Number(rawValue) || 0;
-    acc[key] = (acc[key] || 0) + value;
-    return acc;
-  }, {});
 
   const hasPassiveAdvantage = (skillName) => {
     if (character?.passive_advantage_all) return true;
@@ -193,36 +87,15 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
     return false;
   };
 
-  const passiveSkillValue = (skillName, baseMod, abilityKey) => {
-    const skillKey = normalizeSkillKey(skillName);
-    const skillEntry = skillLookup[skillName];
-    const hasFeatureProficiency = skillProficienciesFromFeatures.has(skillKey);
-    const isProficient = !!skillEntry || hasFeatureProficiency;
-    const hasFeatureExpertise = skillExpertiseFromFeatures.has(skillKey);
-    const isExpertise = skillEntry?.expertise || hasFeatureExpertise;
-    const hasHalfProf = !isProficient && !isExpertise && hasHalfProficiency;
-
-    let bonus = baseMod;
-    if (isExpertise) {
-      bonus += proficiencyBonus * 2;
-    } else if (isProficient) {
-      bonus += proficiencyBonus;
-    } else if (hasHalfProf) {
-      bonus += Math.floor(proficiencyBonus / 2);
-    }
-
-    // Add any additional ability modifiers from features
-    const additionalAbilities = skillAdditionalAbilitiesMap[skillKey] || [];
-    additionalAbilities.forEach(ability => {
-      const additionalMod = derivedMods[ability] || 0;
-      bonus += additionalMod;
+  const passiveSkillValue = (skillName, baseMod) => {
+    const { skillKey, bonus } = calculateSkillBonus({
+      skillName,
+      baseMod,
+      proficiencyBonus,
+      derivedMods,
+      context: skillComputationContext
     });
 
-    // Add flat skill bonuses from bonus engine
-    const flatSkillBonus = normalizedFlatSkillBonuses[skillKey] || 0;
-    bonus += flatSkillBonus;
-
-    // Add advantage bonus (+5) if character has advantage on this skill
     const hasAdvantage = skillAdvantages[skillKey] || hasPassiveAdvantage(skillName);
     const advantageBonus = hasAdvantage ? 5 : 0;
 
@@ -318,15 +191,15 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
         <div className="passive-list">
           <div className="passive-item">
             <span>Passive Perception</span>
-            <span className="passive-value">{passiveSkillValue('Perception', wisMod, 'wisdom')}</span>
+            <span className="passive-value">{passiveSkillValue('Perception', wisMod)}</span>
           </div>
           <div className="passive-item">
             <span>Passive Insight</span>
-            <span className="passive-value">{passiveSkillValue('Insight', wisMod, 'wisdom')}</span>
+            <span className="passive-value">{passiveSkillValue('Insight', wisMod)}</span>
           </div>
           <div className="passive-item">
             <span>Passive Investigation</span>
-            <span className="passive-value">{passiveSkillValue('Investigation', intMod, 'intelligence')}</span>
+            <span className="passive-value">{passiveSkillValue('Investigation', intMod)}</span>
           </div>
         </div>
       </section>

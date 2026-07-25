@@ -20,7 +20,7 @@ vi.mock('../lib/bonusEngine', () => ({
 
 import { useAuth } from '../context/AuthContext';
 import { useCharacter } from '../hooks/useCharacter';
-import { deriveCharacterStats } from '../lib/bonusEngine';
+import { collectBonuses, deriveCharacterStats } from '../lib/bonusEngine';
 
 // Helper to render component with router
 const renderCharacterSheet = () => {
@@ -83,6 +83,7 @@ describe('CharacterSheet', () => {
     });
 
     // Mock deriveCharacterStats to return { derived, totals, sources }
+    collectBonuses.mockReturnValue([]);
     deriveCharacterStats.mockReturnValue({
       derived: mockDerivedStats,
       totals: {},
@@ -219,157 +220,169 @@ describe('CharacterSheet', () => {
   });
 
   describe('HP Modal', () => {
+    const getHpDisplay = () => screen.getByTitle('Click to edit HP');
+
+    const openHpModal = async () => {
+      fireEvent.click(getHpDisplay());
+      await waitFor(() => {
+        expect(document.querySelector('.hp-modal')).toBeTruthy();
+      });
+    };
+
+    it('should include max HP bonuses in modal total', async () => {
+      collectBonuses.mockReturnValue([
+        { target: 'maxHP', value: 10, type: 'feature', source: { label: 'Tough' } }
+      ]);
+
+      renderCharacterSheet();
+
+      // Sticky display should reflect base + CON scaling + bonus-engine HP bonus.
+      const hpDisplay = screen.getByTitle('Click to edit HP');
+      expect(hpDisplay).toHaveTextContent(/35\s*\/\s*65/);
+
+      fireEvent.click(hpDisplay);
+
+      await waitFor(() => {
+        expect(document.querySelector('.hp-modal')).toBeTruthy();
+      });
+
+      // Modal total should match sticky max HP instead of base+CON max HP.
+      const modalTotal = document.querySelector('.hp-total-values');
+      expect(modalTotal).toBeTruthy();
+      expect(modalTotal).toHaveTextContent(/35\s*\/\s*65/);
+    });
+
     it('should open HP modal when HP display is clicked', async () => {
       renderCharacterSheet();
-      const hpDisplay = screen.getByText('35/45');
-      
-      fireEvent.click(hpDisplay);
-      
-      await waitFor(() => {
-        expect(screen.getByRole('dialog')).toBeInTheDocument();
-      });
+      await openHpModal();
     });
 
     it('should display damage calculator in modal', async () => {
       renderCharacterSheet();
-      fireEvent.click(screen.getByText('35/45'));
-      
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText(/enter amount/i)).toBeInTheDocument();
-      });
+      await openHpModal();
+      expect(document.querySelector('.hp-calculator-inputs input')).toBeTruthy();
     });
 
     it('should calculate damage correctly', async () => {
       renderCharacterSheet();
-      fireEvent.click(screen.getByText('35/45'));
-      
-      await waitFor(() => {
-        const input = screen.getByPlaceholderText(/enter amount/i);
-        const damageButton = screen.getByText(/take damage/i);
-        
-        fireEvent.change(input, { target: { value: '10' } });
-        fireEvent.click(damageButton);
-        
-        // HP should be reduced by 10
-        expect(screen.getByText('25/45')).toBeInTheDocument();
-      });
+      await openHpModal();
+
+      const input = document.querySelector('.hp-calculator-inputs input');
+      const damageButton = screen.getByLabelText(/apply damage/i);
+      expect(input).toBeTruthy();
+
+      fireEvent.change(input, { target: { value: '10' } });
+      fireEvent.click(damageButton);
+
+      // HP should be reduced by 10, with max including CON scaling.
+      expect(getHpDisplay()).toHaveTextContent(/25\s*\/\s*55/);
     });
 
     it('should calculate healing correctly', async () => {
       renderCharacterSheet();
-      fireEvent.click(screen.getByText('35/45'));
-      
-      await waitFor(() => {
-        const input = screen.getByPlaceholderText(/enter amount/i);
-        const healButton = screen.getByText(/heal/i);
-        
-        fireEvent.change(input, { target: { value: '10' } });
-        fireEvent.click(healButton);
-        
-        // HP should be increased by 10 (capped at max)
-        expect(screen.getByText('45/45')).toBeInTheDocument();
-      });
+      await openHpModal();
+
+      const input = document.querySelector('.hp-calculator-inputs input');
+      const healButton = screen.getByLabelText(/apply healing/i);
+      expect(input).toBeTruthy();
+
+      fireEvent.change(input, { target: { value: '10' } });
+      fireEvent.click(healButton);
+
+      // HP should be increased by 10 (capped at max).
+      expect(getHpDisplay()).toHaveTextContent(/45\s*\/\s*55/);
     });
 
     it('should reject non-positive integers', async () => {
       renderCharacterSheet();
-      fireEvent.click(screen.getByText('35/45'));
-      
-      await waitFor(() => {
-        const input = screen.getByPlaceholderText(/enter amount/i);
-        const damageButton = screen.getByText(/take damage/i);
-        
-        // Try negative number
-        fireEvent.change(input, { target: { value: '-5' } });
-        fireEvent.click(damageButton);
-        
-        // HP should not change
-        expect(screen.getByText('35/45')).toBeInTheDocument();
-        
-        // Try decimal
-        fireEvent.change(input, { target: { value: '5.5' } });
-        fireEvent.click(damageButton);
-        
-        // HP should not change
-        expect(screen.getByText('35/45')).toBeInTheDocument();
-      });
+      await openHpModal();
+
+      const input = document.querySelector('.hp-calculator-inputs input');
+      const damageButton = screen.getByLabelText(/apply damage/i);
+      expect(input).toBeTruthy();
+
+      // Try negative number
+      fireEvent.change(input, { target: { value: '-5' } });
+      fireEvent.click(damageButton);
+      expect(getHpDisplay()).toHaveTextContent(/35\s*\/\s*55/);
+
+      // Try decimal
+      fireEvent.change(input, { target: { value: '5.5' } });
+      fireEvent.click(damageButton);
+      expect(getHpDisplay()).toHaveTextContent(/35\s*\/\s*55/);
     });
 
     it('should handle temp HP correctly', async () => {
       renderCharacterSheet();
-      fireEvent.click(screen.getByText('35/45'));
-      
-      await waitFor(() => {
-        const tempHPInput = screen.getByLabelText(/temp hp/i);
-        fireEvent.change(tempHPInput, { target: { value: '10' } });
-        
-        // Damage should reduce temp HP first
-        const input = screen.getByPlaceholderText(/enter amount/i);
-        const damageButton = screen.getByText(/take damage/i);
-        
-        fireEvent.change(input, { target: { value: '5' } });
-        fireEvent.click(damageButton);
-        
-        expect(tempHPInput).toHaveValue(5);
-        expect(screen.getByText('35/45')).toBeInTheDocument(); // Regular HP unchanged
-      });
+      await openHpModal();
+
+      const tempHPInput = document.querySelector('.hp-field-temp input');
+      expect(tempHPInput).toBeTruthy();
+      fireEvent.change(tempHPInput, { target: { value: '10' } });
+
+      // Damage should reduce temp HP first.
+      const input = document.querySelector('.hp-calculator-inputs input');
+      const damageButton = screen.getByLabelText(/apply damage/i);
+      expect(input).toBeTruthy();
+
+      fireEvent.change(input, { target: { value: '5' } });
+      fireEvent.click(damageButton);
+
+      expect(tempHPInput).toHaveValue(5);
+      expect(getHpDisplay()).toHaveTextContent(/35\s*\/\s*55/); // Regular HP unchanged
     });
 
     it('should apply max HP modifier', async () => {
       renderCharacterSheet();
-      fireEvent.click(screen.getByText('35/45'));
-      
-      await waitFor(() => {
-        const maxHPInput = screen.getByLabelText(/max hp modifier/i);
-        fireEvent.change(maxHPInput, { target: { value: '5' } });
-        
-        // Max HP should increase
-        expect(screen.getByText('35/50')).toBeInTheDocument();
-      });
+      await openHpModal();
+
+      const maxHPInput = document.querySelector('.hp-field-mod input');
+      expect(maxHPInput).toBeTruthy();
+      fireEvent.change(maxHPInput, { target: { value: '5' } });
+
+      // Max HP should increase.
+      expect(getHpDisplay()).toHaveTextContent(/35\s*\/\s*60/);
     });
 
     it('should persist HP to localStorage on change', async () => {
       renderCharacterSheet();
-      fireEvent.click(screen.getByText('35/45'));
-      
-      await waitFor(() => {
-        const input = screen.getByPlaceholderText(/enter amount/i);
-        const damageButton = screen.getByText(/take damage/i);
-        
-        fireEvent.change(input, { target: { value: '10' } });
-        fireEvent.click(damageButton);
-        
-        const stored = JSON.parse(localStorage.getItem(`hp_${mockCharacter.id}`));
-        expect(stored.currentHP).toBe(25);
-      });
+      await openHpModal();
+
+      const input = document.querySelector('.hp-calculator-inputs input');
+      const damageButton = screen.getByLabelText(/apply damage/i);
+      expect(input).toBeTruthy();
+
+      fireEvent.change(input, { target: { value: '10' } });
+      fireEvent.click(damageButton);
+
+      const stored = JSON.parse(localStorage.getItem(`hp_state_${mockCharacter.id}`));
+      expect(stored.currentHP).toBe(25);
     });
 
     it('should load HP from localStorage on mount', () => {
-      localStorage.setItem(`hp_${mockCharacter.id}`, JSON.stringify({
+      localStorage.setItem(`hp_state_${mockCharacter.id}`, JSON.stringify({
         currentHP: 20,
         tempHP: 5,
-        maxHPModifier: 3
+        maxHPModifier: 3,
+        deathSaveSuccesses: 0,
+        deathSaveFailures: 0
       }));
 
       renderCharacterSheet();
-      
-      expect(screen.getByText('20/48')).toBeInTheDocument();
+
+      // 55 base display max + 3 custom modifier
+      expect(getHpDisplay()).toHaveTextContent(/20\s*\/\s*58/);
     });
 
     it('should close modal when close button clicked', async () => {
       renderCharacterSheet();
-      fireEvent.click(screen.getByText('35/45'));
-      
+
+      await openHpModal();
+      const closeButton = screen.getAllByLabelText(/close hp modal/i)[0];
+      fireEvent.click(closeButton);
+
       await waitFor(() => {
-        const modal = screen.getByRole('dialog');
-        expect(modal).toBeInTheDocument();
-        
-        const closeButton = within(modal).getByLabelText(/close/i);
-        fireEvent.click(closeButton);
-      });
-      
-      await waitFor(() => {
-        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(document.querySelector('.hp-modal')).toBeNull();
       });
     });
   });

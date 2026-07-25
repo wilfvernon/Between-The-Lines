@@ -466,11 +466,31 @@ CREATE TABLE magic_items (
   rarity VARCHAR(50), -- 'common', 'uncommon', 'rare', 'very rare', 'legendary'
   requires_attunement BOOLEAN DEFAULT false,
   description TEXT NOT NULL,
+  benefits JSONB, -- structured runtime mechanics (bonuses, ability overrides, property mutations)
   properties JSONB, -- weapon stats, armor AC, special abilities, etc.
   image_url TEXT, -- Optional image for the magic item
   
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+```
+
+#### `magic_items.benefits` shape (runtime)
+
+```typescript
+Array<
+  | { type: 'weapon_attack_ability'; ability_mod: 'finesse' | 'spellcasting' | 'strength' | 'dexterity' | 'constitution' | 'intelligence' | 'wisdom' | 'charisma' | string }
+  | { type: 'weapon_property'; add_properties?: string[] | string; remove_properties?: string[] | string; properties_add?: string[] | string; properties_remove?: string[] | string; grant_properties?: string[] | string; weapon_properties?: string[] | { add?: string[] | string; remove?: string[] | string }; finesse?: boolean; grants_finesse?: boolean; remove_finesse?: boolean }
+  | { type: 'weapon_bonus' | 'magic_weapon_bonus' | 'weapon_attack_bonus' | 'weapon_damage_bonus' | 'weapon_damage_override'; [key: string]: any }
+>;
+```
+
+Example:
+
+```json
+[
+  { "type": "weapon_attack_ability", "ability_mod": "finesse" },
+  { "type": "weapon_property", "add_properties": ["finesse", "versatile"] }
+]
 ```
 
 ### Table: `character_inventory`
@@ -480,32 +500,32 @@ CREATE TABLE character_inventory (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   
-  -- For magic items (reference)
+  -- Exactly one item source is populated per row
   magic_item_id UUID REFERENCES magic_items(id) ON DELETE CASCADE,
-  
-  -- For mundane items (fetch from API, store only the reference)
-  mundane_item_name VARCHAR(255), -- e.g., "Rope (50 ft)", "Backpack"
+  equipment_id UUID REFERENCES equipment(id) ON DELETE CASCADE,
+  trinket_name TEXT,
   
   -- Common fields
   quantity INTEGER DEFAULT 1,
   equipped BOOLEAN DEFAULT false,
   attuned BOOLEAN DEFAULT false, -- only for magic items
-  notes TEXT, -- custom notes about this specific item
+  notes TEXT, -- custom notes about this specific inventory row (magic, equipment, or trinket)
   
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   
-  -- Either magic_item_id OR mundane_item_name must be set
-  CHECK (
-    (magic_item_id IS NOT NULL AND mundane_item_name IS NULL) OR
-    (magic_item_id IS NULL AND mundane_item_name IS NOT NULL)
+  CONSTRAINT inventory_item_source_check CHECK (
+    (
+      CASE WHEN magic_item_id IS NOT NULL THEN 1 ELSE 0 END +
+      CASE WHEN equipment_id IS NOT NULL THEN 1 ELSE 0 END +
+      CASE WHEN trinket_name IS NOT NULL AND length(trim(trinket_name)) > 0 THEN 1 ELSE 0 END
+    ) = 1
   )
 );
 ```
 
 **Note**: 
-- Mundane items (rope, rations, etc.) are fetched from external API and only stored by name
-- Magic items are fully defined in `magic_items` table with all stats and properties
-- Item details (weight, damage, AC, etc.) come from the API for mundane items or `magic_items` table for magical ones
+- Equipment rows reference `equipment.id`; magic rows reference `magic_items.id`; custom entries use `trinket_name`
+- `notes` is available for all inventory item types and editable from the item modal
 
 ---
 
@@ -864,7 +884,8 @@ When fetched from the database, the character data is assembled into this struct
   "inventory": [
     {
       "id": "inv-1",
-      "mundaneItemName": "Quarterstaff",
+      "equipmentId": "equipment-uuid-quarterstaff",
+      "trinketName": null,
       "magicItemId": null,
       "quantity": 1,
       "equipped": true,
@@ -880,7 +901,8 @@ When fetched from the database, the character data is assembled into this struct
     },
     {
       "id": "inv-2",
-      "mundaneItemName": "Studded Leather Armor",
+      "equipmentId": "equipment-uuid-studded-leather-armor",
+      "trinketName": null,
       "magicItemId": null,
       "quantity": 1,
       "equipped": true,
@@ -896,7 +918,8 @@ When fetched from the database, the character data is assembled into this struct
     },
     {
       "id": "inv-3",
-      "mundaneItemName": null,
+      "equipmentId": null,
+      "trinketName": null,
       "magicItemId": "magic-item-uuid-1",
       "quantity": 1,
       "equipped": false,
@@ -916,7 +939,8 @@ When fetched from the database, the character data is assembled into this struct
     },
     {
       "id": "inv-4",
-      "mundaneItemName": "Potion of Healing",
+      "equipmentId": "equipment-uuid-potion-of-healing",
+      "trinketName": null,
       "magicItemId": null,
       "quantity": 3,
       "equipped": false,
@@ -931,7 +955,8 @@ When fetched from the database, the character data is assembled into this struct
     },
     {
       "id": "inv-5",
-      "mundaneItemName": "Rope, Hempen (50 feet)",
+      "equipmentId": "equipment-uuid-rope-hempen-50-feet",
+      "trinketName": null,
       "magicItemId": null,
       "quantity": 1,
       "equipped": false,

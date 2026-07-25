@@ -23,6 +23,7 @@ Import notes:
 - `languages/tools/instruments` are stored as Postgres arrays and should be sent as JavaScript arrays.
 - Import UI accepts comma-separated input and converts to arrays before insert.
 - `character_inventory` now uses `equipment_id` for non-magic items (legacy `mundane_item_name` is no longer used).
+- `character_inventory.notes` is a shared per-item notes field for equipment, magic items, and trinkets.
 - Currency is no longer inserted via `character_currency` in the character importer flow.
 
 ## Characters Table
@@ -163,6 +164,34 @@ Magic weapon:
 }
 ```
 
+Magic weapon with custom attack ability behavior (in `magic_items.benefits`):
+```json
+[
+  {
+    "type": "weapon_attack_ability",
+    "ability_mod": "finesse"
+  }
+]
+```
+
+Alternative ability override examples:
+```json
+[
+  { "type": "weapon_attack_ability", "ability_mod": "spellcasting" },
+  { "type": "weapon_attack_ability", "ability_mod": "wisdom" }
+]
+```
+
+Property mutation example (adds `Finesse` to base weapon properties):
+```json
+[
+  {
+    "type": "weapon_property",
+    "add_properties": ["finesse"]
+  }
+]
+```
+
 Wand with charges:
 ```json
 {
@@ -204,6 +233,60 @@ Hazel's Glimmercloak:
     }
   ]
 }
+```
+
+---
+
+### `magic_items.benefits` (JSONB, nullable)
+
+Structured mechanics for magic item behavior, especially weapon overrides.
+
+```typescript
+Array<
+  // Shared/legacy bonus entries
+  | { type: 'weapon_bonus' | 'magic_weapon_bonus'; amount?: number; value?: number; applies_to?: 'attack' | 'damage' | 'attack_and_damage'; bonus_type?: string }
+  | { type: 'weapon_attack_bonus' | 'melee_weapon_attack_bonus'; amount?: number; value?: number; bonus_source?: string; weapon_property?: string; versatile?: number; bonus_type?: string }
+  | { type: 'weapon_damage_bonus' | 'melee_weapon_damage_bonus'; amount?: number; value?: number; weapon_property?: string; versatile?: number; bonus_type?: string }
+  | { type: 'weapon_damage_override' | 'damage_override' | 'weapon_damage_profile'; damage_dice_override?: string; versatile_damage_dice_override?: string; damage_type_override?: string; ignore_damage_mod?: boolean }
+
+  // New: choose the attack/damage ability used by the weapon
+  | { type: 'weapon_attack_ability'; ability_mod: 'strength' | 'dexterity' | 'constitution' | 'intelligence' | 'wisdom' | 'charisma' | 'finesse' | 'spellcasting' | string }
+
+  // New: mutate effective weapon properties at runtime
+  | {
+      type: 'weapon_property';
+      add_properties?: string[] | string;      // e.g. ['finesse', 'versatile']
+      remove_properties?: string[] | string;   // e.g. ['heavy']
+      properties_add?: string[] | string;      // alias of add_properties
+      properties_remove?: string[] | string;   // alias of remove_properties
+      grant_properties?: string[] | string;    // alias of add_properties
+      weapon_properties?: string[] | { add?: string[] | string; remove?: string[] | string };
+      finesse?: boolean;                        // shorthand for add_properties: ['finesse']
+      grants_finesse?: boolean;                 // alias
+      remove_finesse?: boolean;
+    }
+>;
+```
+
+Notes:
+
+- `ability_mod: 'finesse'` applies finesse-style STR/DEX selection and also marks the weapon as effectively `Finesse`.
+- `ability_mod: 'spellcasting'` uses the character spellcasting modifier for weapon attack and ability-based damage.
+- `add_properties` accepts any property token; common values include `finesse`, `light`, `thrown`, `reach`, and `versatile`.
+- Property mutations affect combat calculations and item modal property display in current runtime.
+
+Example (Longsword gains finesse + versatile):
+```json
+[
+  {
+    "type": "weapon_attack_ability",
+    "ability_mod": "finesse"
+  },
+  {
+    "type": "weapon_property",
+    "add_properties": ["finesse", "versatile"]
+  }
+]
 ```
 
 ---

@@ -5490,28 +5490,28 @@ Last Updated: 2026-03-04
 
 /* Magical glow effect - only when attuned */
 .inventory-item.attuned .item-name.rarity-uncommon {
-  text-shadow: 
+  text-shadow:
     0 0 8px rgba(76, 175, 80, 0.8),
     0 0 12px rgba(76, 175, 80, 0.6),
     0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .inventory-item.attuned .item-name.rarity-rare {
-  text-shadow: 
+  text-shadow:
     0 0 8px rgba(33, 150, 243, 0.8),
     0 0 12px rgba(33, 150, 243, 0.6),
     0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .inventory-item.attuned .item-name.rarity-very-rare {
-  text-shadow: 
+  text-shadow:
     0 0 8px rgba(156, 39, 176, 0.8),
     0 0 12px rgba(156, 39, 176, 0.6),
     0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .inventory-item.attuned .item-name.rarity-legendary {
-  text-shadow: 
+  text-shadow:
     0 0 10px rgba(255, 215, 0, 0.9),
     0 0 15px rgba(255, 215, 0, 0.7),
     0 1px 3px rgba(0, 0, 0, 0.6);
@@ -5818,6 +5818,49 @@ Last Updated: 2026-03-04
   margin-bottom: 6px;
 }
 
+.item-notes-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 4px 0 8px 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: #5b2d0a;
+  border-bottom: 1px solid rgba(91, 45, 10, 0.2);
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.item-notes-toggle .item-label {
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.item-notes-toggle:hover {
+  color: #7a3a0f;
+  border-bottom-color: rgba(181, 58, 71, 0.45);
+}
+
+.item-notes-toggle-arrow {
+  font-size: 0.78rem;
+  color: currentColor;
+  opacity: 0.8;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.item-notes-toggle-arrow.expanded {
+  transform: rotate(180deg);
+  opacity: 1;
+}
+
+.item-notes-panel {
+  margin-top: 10px;
+}
+
 .item-modal-content::-webkit-scrollbar {
   width: 8px;
 }
@@ -6087,6 +6130,39 @@ Last Updated: 2026-03-04
 .item-quantity-input[type=number] {
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+.item-notes-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(91, 45, 10, 0.3);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.35);
+  font-family: 'Goudy Bookletter 1911', 'Goudy Old Style', serif;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #3d2817;
+  resize: vertical;
+}
+
+.item-notes-input::placeholder {
+  color: rgba(61, 40, 23, 0.5);
+}
+
+.item-notes-input:hover:not(:disabled) {
+  border-color: rgba(91, 45, 10, 0.45);
+}
+
+.item-notes-input:focus {
+  outline: none;
+  border-color: #b53a47;
+  box-shadow: 0 0 0 2px rgba(181, 58, 71, 0.12);
+}
+
+.item-notes-input:disabled {
+  opacity: 0.65;
+  background-color: #ebe7de;
+  cursor: not-allowed;
 }
 
 .item-confirm-overlay {
