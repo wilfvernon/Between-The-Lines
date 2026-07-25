@@ -6,6 +6,7 @@ import { renderSpellDescription } from '../../../lib/spellUtils.jsx';
 function normalizeBenefits(rawBenefits) {
   if (Array.isArray(rawBenefits)) return rawBenefits;
   if (rawBenefits && typeof rawBenefits === 'object') {
+    if (Array.isArray(rawBenefits.benefits)) return rawBenefits.benefits;
     return rawBenefits.type ? [rawBenefits] : [];
   }
   if (typeof rawBenefits === 'string') {
@@ -362,6 +363,59 @@ function getMagicItemActionFeatures(character, targetType) {
           source: 'item',
           item: magicItem.name,
           inventory_item_id: inventoryItem.id
+        }
+      });
+    });
+  });
+
+  return features;
+}
+
+function getFeatActionFeatures(character, targetType) {
+  const featEntries = Array.isArray(character?.feats) ? character.feats : [];
+  const features = [];
+
+  featEntries.forEach((featEntry, featIndex) => {
+    const joinedFeat = featEntry?.feat && typeof featEntry.feat === 'object'
+      ? featEntry.feat
+      : featEntry?.feats && typeof featEntry.feats === 'object'
+        ? featEntry.feats
+        : null;
+
+    const featName = joinedFeat?.name || featEntry?.name || `Feat ${featIndex + 1}`;
+    const featId = featEntry?.id || joinedFeat?.id || `feat-${featName}-${featIndex}`;
+
+    const staticBenefits = normalizeBenefits(featEntry?.benefits ?? joinedFeat?.benefits);
+    const choiceBenefits = normalizeBenefits(featEntry?.choices);
+    const allBenefits = [...staticBenefits, ...choiceBenefits];
+
+    allBenefits.forEach((benefit, benefitIndex) => {
+      if (normalizeBenefitType(benefit?.type) !== targetType) return;
+
+      const benefitDescription = [
+        benefit?.description,
+        benefit?.effect,
+        benefit?.short,
+        benefit?.text,
+        joinedFeat?.description,
+        featEntry?.description,
+      ].find((value) => typeof value === 'string' && value.trim().length > 0) || '';
+
+      const shortParts = [];
+      if (benefit?.trigger) shortParts.push(`**Trigger:** ${benefit.trigger}`);
+      if (benefitDescription) shortParts.push(benefitDescription);
+
+      features.push({
+        id: `feat-${featId}-${targetType}-${benefitIndex}`,
+        name: benefit?.name || featName,
+        short: shortParts.join('\n\n') || '',
+        description: benefitDescription,
+        max_uses: benefit?.uses?.max ?? featEntry?.max_uses ?? joinedFeat?.max_uses ?? null,
+        benefits: [benefit],
+        source: {
+          source: 'feat',
+          feat: featName,
+          feat_id: featId
         }
       });
     });
@@ -1685,6 +1739,16 @@ export default function ActionsTab({
       });
     }
 
+    // Add feat bonus actions (same benefits model as features)
+    const featBonusActions = getFeatActionFeatures(character, 'bonus_action');
+    featBonusActions.forEach(feature => {
+      items.push({
+        type: 'feature',
+        data: feature,
+        id: `feature-${feature.id || feature.name}`
+      });
+    });
+
     // Add magic-item bonus actions (same benefits model as features)
     const magicItemBonusActions = getMagicItemActionFeatures(character, 'bonus_action');
     magicItemBonusActions.forEach(feature => {
@@ -1775,6 +1839,16 @@ export default function ActionsTab({
         }
       });
     }
+
+    // Add feat reactions (same benefits model as features)
+    const featReactions = getFeatActionFeatures(character, 'reaction');
+    featReactions.forEach(feature => {
+      items.push({
+        type: 'feature',
+        data: feature,
+        id: `feature-${feature.id || feature.name}`
+      });
+    });
 
     // Add magic-item reactions (same benefits model as features)
     const magicItemReactions = getMagicItemActionFeatures(character, 'reaction');
