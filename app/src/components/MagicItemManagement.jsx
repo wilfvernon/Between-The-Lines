@@ -12,6 +12,8 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
   const [type, setType] = useState('');
   const [rarity, setRarity] = useState('');
   const [attunementRequired, setAttunementRequired] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [imagePreviewError, setImagePreviewError] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [description, setDescription] = useState('');
   const [benefits, setBenefits] = useState('');
@@ -53,6 +55,8 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     setType('');
     setRarity('');
     setAttunementRequired('');
+    setImageUrl('');
+    setImagePreviewError(false);
     setHidden(false);
     setDescription('');
     setBenefits('');
@@ -65,6 +69,8 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
     setType(prefill.type || '');
     setRarity(prefill.rarity || '');
     setAttunementRequired(prefill.requires_attunement || prefill.attunement_required || '');
+    setImageUrl(prefill.image_url || prefill.imageUrl || '');
+    setImagePreviewError(false);
     setHidden(prefill.hidden === true || String(prefill.hidden).toLowerCase() === 'true');
     setDescription(prefill.description || '');
     if (prefill.benefits) {
@@ -102,6 +108,8 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
       setType(scraped.type || '');
       setRarity(scraped.rarity || '');
       setAttunementRequired(scraped.requires_attunement || '');
+      setImageUrl(scraped.image_url || scraped.imageUrl || '');
+      setImagePreviewError(false);
       setHidden(false);
       setDescription(scraped.description || '');
       if (scraped.benefits && (typeof scraped.benefits === 'object' || Array.isArray(scraped.benefits))) {
@@ -143,6 +151,7 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
           type: type || null,
           rarity: rarity || null,
           requires_attunement: attunementRequired || null,
+          image_url: imageUrl.trim() || null,
           hidden,
           description,
           benefits: benefitsJson
@@ -379,6 +388,47 @@ export default function MagicItemManagement({ prefill, onPrefillConsumed }) {
               onChange={(e) => setAttunementRequired(e.target.value)} 
               placeholder="Yes / by a wizard / etc."
             />
+          </div>
+
+          <div>
+            <label>Image URL
+              <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#666' }}>
+                {' '}Optional
+              </span>
+            </label>
+            <input
+              type="url"
+              value={imageUrl}
+              onChange={(e) => {
+                setImageUrl(e.target.value);
+                setImagePreviewError(false);
+              }}
+              placeholder="https://example.com/item-image.png"
+            />
+            {imageUrl.trim() && (
+              <div style={{ marginTop: '8px' }}>
+                {imagePreviewError ? (
+                  <div style={{ fontSize: '12px', color: '#a94442' }}>
+                    Could not load image preview.
+                  </div>
+                ) : (
+                  <img
+                    src={imageUrl.trim()}
+                    alt="Magic item preview"
+                    onLoad={() => setImagePreviewError(false)}
+                    onError={() => setImagePreviewError(true)}
+                    style={{
+                      width: '80px',
+                      height: '80px',
+                      objectFit: 'cover',
+                      borderRadius: '4px',
+                      border: '1px solid #d7d7d7',
+                      background: '#fafafa'
+                    }}
+                  />
+                )}
+              </div>
+            )}
           </div>
 
           <div>
