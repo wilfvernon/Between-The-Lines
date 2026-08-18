@@ -148,7 +148,7 @@ const RARITY_ORDER = {
  * @param {Object} character - The character object with classes array
  * @returns {boolean} - True if proficient, false otherwise
  */
-const isWeaponProficient = (weapon, character) => {
+const isWeaponProficient = (weapon, character, effectivePropertyNames = null) => {
   if (!weapon || !character) return false;
 
   const normalizeToken = (value) => String(value || '')
@@ -221,11 +221,13 @@ const isWeaponProficient = (weapon, character) => {
   const hasMonk = classNames.includes('Monk');
   
   if (hasRogue || hasMonk) {
-    const properties = weapon.raw_data?.properties || [];
-    const propertyNames = properties.map(p => p.name || p);
-    
-    const hasLight = propertyNames.includes('Light');
-    const hasFinesse = propertyNames.includes('Finesse');
+    const properties = Array.isArray(effectivePropertyNames) && effectivePropertyNames.length > 0
+      ? effectivePropertyNames
+      : (weapon.raw_data?.properties || []).map((p) => p.name || p);
+    const normalizedPropertyNames = new Set(properties.map((property) => normalizePropertyName(property)));
+
+    const hasLight = normalizedPropertyNames.has('light');
+    const hasFinesse = normalizedPropertyNames.has('finesse');
     
     // Monk: proficient with Light Martial weapons
     if (hasMonk && hasLight) return true;
@@ -449,6 +451,36 @@ const normalizeBenefitType = (value) => String(value || '')
   .trim()
   .toLowerCase()
   .replace(/[\s-]+/g, '_');
+
+const normalizePropertyName = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[\s-]+/g, '_');
+
+const toPropertyLabel = (token) => {
+  const normalized = normalizePropertyName(token);
+  if (!normalized) return '';
+
+  const labels = {
+    two_handed: 'Two-Handed',
+    ammunition: 'Ammunition',
+    finesse: 'Finesse',
+    heavy: 'Heavy',
+    light: 'Light',
+    loading: 'Loading',
+    reach: 'Reach',
+    special: 'Special',
+    thrown: 'Thrown',
+    versatile: 'Versatile'
+  };
+
+  if (labels[normalized]) return labels[normalized];
+
+  return normalized
+    .split('_')
+    .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part)
+    .join(' ');
+};
 
 const getSelectBenefit = (feature) => {
   const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
@@ -1968,6 +2000,7 @@ function CharacterSheet() {
   const conModBonus = conMod * characterLevel;
   const effectiveBaseMaxHP = baseMaxHP + conModBonus;
   const hpBonusesFromFeatures = allBonuses.filter(b => b.target === 'maxHP').reduce((sum, b) => sum + b.value, 0);
+  const effectiveBonusAdjustedMaxHP = effectiveBaseMaxHP + hpBonusesFromFeatures;
   const effectiveDisplayMaxHP = baseMaxHP + conModBonus + hpBonusesFromFeatures + maxHPModifier;
 
   // These ARE derived modifiers (calculated from derived scores with bonuses applied)
@@ -2457,7 +2490,7 @@ function CharacterSheet() {
           setDeathSaveSuccesses={setDeathSaveSuccesses}
           deathSaveFailures={deathSaveFailures}
           setDeathSaveFailures={setDeathSaveFailures}
-          maxHP={effectiveBaseMaxHP}
+          maxHP={effectiveBonusAdjustedMaxHP}
           damageInput={damageInput}
           setDamageInput={setDamageInput}
           isOpen={isHPModalOpen}
@@ -2778,6 +2811,7 @@ const getMagicItemWeaponDisplayProfile = (inventoryItem, rawData = {}) => {
     meleeDamageType: rawData?.damage?.damage_type?.name || null,
     versatileDamageDice: rawData?.two_handed_damage?.damage_dice || null,
     versatileDamageType: rawData?.two_handed_damage?.damage_type?.name || null,
+    effectiveProperties: (rawData?.properties || []).map((p) => p?.name || p).filter(Boolean),
   };
 
   if (!magicItem) return profile;
@@ -2785,6 +2819,54 @@ const getMagicItemWeaponDisplayProfile = (inventoryItem, rawData = {}) => {
   const benefits = normalizeBenefitsInput(
     magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
   );
+
+  const addedProperties = new Set();
+  const removedProperties = new Set();
+
+  const addProperty = (value) => {
+    const normalized = normalizePropertyName(value);
+    if (!normalized) return;
+    removedProperties.delete(normalized);
+    addedProperties.add(normalized);
+  };
+
+  const removeProperty = (value) => {
+    const normalized = normalizePropertyName(value);
+    if (!normalized) return;
+    addedProperties.delete(normalized);
+    removedProperties.add(normalized);
+  };
+
+  const addPropertyList = (values, applyFn) => {
+    if (!values) return;
+    if (Array.isArray(values)) {
+      values.forEach((entry) => applyFn(entry));
+      return;
+    }
+    if (typeof values === 'string') {
+      values.split(',').map((part) => part.trim()).filter(Boolean).forEach((entry) => applyFn(entry));
+    }
+  };
+
+  const applyPropertyChanges = (benefit) => {
+    addPropertyList(benefit?.add_properties, addProperty);
+    addPropertyList(benefit?.properties_add, addProperty);
+    addPropertyList(benefit?.grant_properties, addProperty);
+    addPropertyList(benefit?.remove_properties, removeProperty);
+    addPropertyList(benefit?.properties_remove, removeProperty);
+
+    const weaponProperties = benefit?.weapon_properties;
+    if (Array.isArray(weaponProperties)) {
+      addPropertyList(weaponProperties, addProperty);
+    } else if (weaponProperties && typeof weaponProperties === 'object') {
+      addPropertyList(weaponProperties.add, addProperty);
+      addPropertyList(weaponProperties.remove, removeProperty);
+    }
+
+    if (benefit?.finesse === true || String(benefit?.finesse || '').toLowerCase() === 'true') addProperty('finesse');
+    if (benefit?.grants_finesse === true || String(benefit?.grants_finesse || '').toLowerCase() === 'true') addProperty('finesse');
+    if (benefit?.remove_finesse === true || String(benefit?.remove_finesse || '').toLowerCase() === 'true') removeProperty('finesse');
+  };
 
   const applyOverride = (benefit) => {
     const meleeDice = benefit?.damage_dice_override ?? benefit?.damage_dice ?? benefit?.dice_override;
@@ -2818,11 +2900,35 @@ const getMagicItemWeaponDisplayProfile = (inventoryItem, rawData = {}) => {
   };
 
   benefits.forEach((benefit) => {
+    applyPropertyChanges(benefit);
     const type = normalizeBenefitType(benefit?.type);
     if (['weapon_damage_override', 'damage_override', 'weapon_damage_profile', 'weapon_bonus', 'magic_weapon_bonus'].includes(type)) {
       applyOverride(benefit);
     }
   });
+
+  if (magicItem?.finesse === true || String(magicItem?.finesse || '').toLowerCase() === 'true') {
+    addProperty('finesse');
+  }
+  if (magicItem?.properties?.finesse === true || String(magicItem?.properties?.finesse || '').toLowerCase() === 'true') {
+    addProperty('finesse');
+  }
+  if (magicItem?.raw_data?.finesse === true || String(magicItem?.raw_data?.finesse || '').toLowerCase() === 'true') {
+    addProperty('finesse');
+  }
+
+  const baseProperties = new Set(
+    (profile.effectiveProperties || [])
+      .map((property) => normalizePropertyName(property))
+      .filter(Boolean)
+  );
+
+  removedProperties.forEach((property) => baseProperties.delete(property));
+  addedProperties.forEach((property) => baseProperties.add(property));
+
+  profile.effectiveProperties = Array.from(baseProperties)
+    .map((property) => toPropertyLabel(property))
+    .filter(Boolean);
 
   const fallbackMeleeDice = magicItem?.damage_dice_override
     ?? magicItem?.raw_data?.damage_dice_override
@@ -3656,6 +3762,7 @@ function ItemModal({
   })();
   const isWeapon = isEquipmentLike && linkedEquipment.type?.toLowerCase().includes('weapon');
   const weaponDisplayProfile = isWeapon ? getMagicItemWeaponDisplayProfile(item, rawData) : null;
+  const effectiveWeaponProperties = weaponDisplayProfile?.effectiveProperties || [];
   const hasItemNotesChanges = itemNotes !== (item?.notes || '');
 
   const saveItemNotes = async () => {
@@ -3796,7 +3903,7 @@ function ItemModal({
               <div className="item-weapon-properties">
                 {/* Proficiency Status */}
                 {(() => {
-                  const isProficient = isWeaponProficient(linkedEquipment, character);
+                  const isProficient = isWeaponProficient(linkedEquipment, character, effectiveWeaponProperties);
                   return (
                     <div className="item-row">
                       <span className="item-label">Proficiency:</span>
@@ -3828,10 +3935,10 @@ function ItemModal({
                   </div>
                 )}
                 
-                {rawData.properties && rawData.properties.length > 0 && (
+                {effectiveWeaponProperties.length > 0 && (
                   <div className="item-row">
                     <span className="item-label">Properties:</span>
-                    <span>{rawData.properties.map((p) => p.name || p).join(', ')}</span>
+                    <span>{effectiveWeaponProperties.join(', ')}</span>
                   </div>
                 )}
                 
