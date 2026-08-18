@@ -3543,7 +3543,8 @@ function ItemModal({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [quantityInput, setQuantityInput] = useState(item?.quantity || 1);
   const [pocketInput, setPocketInput] = useState(item?.pocket || '');
-  const [trinketDescription, setTrinketDescription] = useState(item?.notes || '');
+  const [itemNotes, setItemNotes] = useState(item?.notes || '');
+  const [isNotesExpanded, setIsNotesExpanded] = useState(Boolean(item?.notes));
   const [isSaving, setIsSaving] = useState(false);
   const [showPocketDropdown, setShowPocketDropdown] = useState(false);
   const [itemUses, setItemUses] = useState(() => {
@@ -3567,7 +3568,8 @@ function ItemModal({
       setQuantityInput(item.quantity);
     }
     setPocketInput(item?.pocket || '');
-    setTrinketDescription(item?.notes || '');
+    setItemNotes(item?.notes || '');
+    setIsNotesExpanded(Boolean(item?.notes));
     setShowPocketDropdown(false);
     
     // Load stored uses for this item
@@ -3654,15 +3656,15 @@ function ItemModal({
   })();
   const isWeapon = isEquipmentLike && linkedEquipment.type?.toLowerCase().includes('weapon');
   const weaponDisplayProfile = isWeapon ? getMagicItemWeaponDisplayProfile(item, rawData) : null;
-  const hasTrinketDescriptionChanges = isTrinket && (trinketDescription !== (item?.notes || ''));
+  const hasItemNotesChanges = itemNotes !== (item?.notes || '');
 
-  const saveTrinketDescription = async () => {
-    if (!isTrinket || !item?.id) return;
+  const saveItemNotes = async () => {
+    if (!item?.id) return;
     setIsSaving(true);
     try {
       const { error } = await supabase
         .from('character_inventory')
-        .update({ notes: trinketDescription.trim() || null })
+        .update({ notes: itemNotes.trim() || null })
         .eq('id', item.id);
 
       if (error) throw error;
@@ -3671,8 +3673,8 @@ function ItemModal({
         await onQuantityUpdate();
       }
     } catch (err) {
-      console.error('Error updating trinket description:', err);
-      setTrinketDescription(item?.notes || '');
+      console.error('Error updating item notes:', err);
+      setItemNotes(item?.notes || '');
     } finally {
       setIsSaving(false);
     }
@@ -3935,39 +3937,48 @@ function ItemModal({
             </>
           )}
 
-          {isTrinket && (
-            <div className="item-section">
-              <div className="item-row" style={{ marginBottom: '8px' }}>
-                <span className="item-label">Description:</span>
+          <div className="item-section">
+            <button
+              type="button"
+              className="item-notes-toggle"
+              onClick={() => setIsNotesExpanded((prev) => !prev)}
+              aria-expanded={isNotesExpanded}
+              aria-controls="item-notes-panel"
+            >
+              <span className="item-label">Notes</span>
+              <span className={`item-notes-toggle-arrow ${isNotesExpanded ? 'expanded' : ''}`}>▼</span>
+            </button>
+
+            {isNotesExpanded && (
+              <div id="item-notes-panel" className="item-notes-panel">
+                <textarea
+                  className="item-notes-input"
+                  rows={4}
+                  value={itemNotes}
+                  onChange={(e) => setItemNotes(e.target.value)}
+                  disabled={isSaving}
+                  placeholder={isTrinket ? 'Add notes or description for this trinket...' : 'Add notes for this item...'}
+                />
+                {hasItemNotesChanges && (
+                  <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      className="item-quantity-save"
+                      onClick={saveItemNotes}
+                      disabled={isSaving}
+                      title="Save notes"
+                      aria-label="Save notes"
+                    >
+                      <span
+                        className="item-quantity-save-icon"
+                        style={{ '--icon-url': `url(${new URL('../assets/icons/util/tick.svg', import.meta.url).href})` }}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  </div>
+                )}
               </div>
-              <textarea
-                className="item-quantity-input"
-                rows={4}
-                value={trinketDescription}
-                onChange={(e) => setTrinketDescription(e.target.value)}
-                disabled={isSaving}
-                placeholder="Add notes or description for this trinket..."
-                style={{ width: '100%', resize: 'vertical' }}
-              />
-              {hasTrinketDescriptionChanges && (
-                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    className="item-quantity-save"
-                    onClick={saveTrinketDescription}
-                    disabled={isSaving}
-                    title="Save description"
-                    aria-label="Save description"
-                  >
-                    <span
-                      className="item-quantity-save-icon"
-                      style={{ '--icon-url': `url(${new URL('../assets/icons/util/tick.svg', import.meta.url).href})` }}
-                      aria-hidden="true"
-                    />
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
           
           {/* Pocket Selection */}
           <div className="item-section">
