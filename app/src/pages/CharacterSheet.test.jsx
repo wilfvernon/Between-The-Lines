@@ -18,9 +18,40 @@ vi.mock('../lib/bonusEngine', () => ({
   deriveCharacterStats: vi.fn()
 }));
 
+// Mock embla-carousel-react: jsdom has no real layout/scrolling, so the real
+// carousel never fires its 'select' event. Provide a deterministic stand-in
+// that invokes registered 'select' listeners synchronously on scrollTo.
+// The api instance is module-scoped so it stays stable across re-renders,
+// matching real embla-carousel-react's behavior.
+vi.mock('embla-carousel-react', () => {
+  let selectedIndex = 0;
+  let listeners = { select: [], reInit: [] };
+  const emblaApi = {
+    selectedScrollSnap: () => selectedIndex,
+    scrollTo: (index) => {
+      selectedIndex = index;
+      listeners.select.forEach((cb) => cb());
+    },
+    on: (event, cb) => { listeners[event]?.push(cb); },
+    off: (event, cb) => {
+      if (!listeners[event]) return;
+      listeners[event] = listeners[event].filter((fn) => fn !== cb);
+    },
+    reInit: () => {}
+  };
+  return {
+    default: () => [() => {}, emblaApi],
+    __resetEmblaMock: () => {
+      selectedIndex = 0;
+      listeners = { select: [], reInit: [] };
+    }
+  };
+});
+
 import { useAuth } from '../context/AuthContext';
 import { useCharacter } from '../hooks/useCharacter';
 import { collectBonuses, deriveCharacterStats } from '../lib/bonusEngine';
+import { __resetEmblaMock } from 'embla-carousel-react';
 
 // Helper to render component with router
 const renderCharacterSheet = () => {
@@ -66,6 +97,7 @@ describe('CharacterSheet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    __resetEmblaMock();
 
     useAuth.mockReturnValue({
       user: mockUser,
@@ -99,7 +131,7 @@ describe('CharacterSheet', () => {
     it('should render character name and level', () => {
       renderCharacterSheet();
       expect(screen.getByText('Test Character')).toBeInTheDocument();
-      expect(screen.getByText(/Level 5/i)).toBeInTheDocument();
+      expect(screen.getByText(/Lvl 5/i)).toBeInTheDocument();
     });
 
     it('should show loading state while fetching character', () => {
@@ -111,7 +143,7 @@ describe('CharacterSheet', () => {
       });
 
       renderCharacterSheet();
-      expect(screen.getByText(/loading/i)).toBeInTheDocument();
+      expect(document.querySelector('.route-loading')).toBeInTheDocument();
     });
 
     it('should show error message when fetch fails', () => {
@@ -123,7 +155,7 @@ describe('CharacterSheet', () => {
       });
 
       renderCharacterSheet();
-      expect(screen.getByText('Failed to load character')).toBeInTheDocument();
+      expect(screen.getByText(/Failed to load character/i)).toBeInTheDocument();
     });
 
     it('should render character portrait', () => {
@@ -189,33 +221,40 @@ describe('CharacterSheet', () => {
   describe('Sticky Header', () => {
     it('should display HP in sticky header', () => {
       renderCharacterSheet();
-      expect(screen.getByText('35/45')).toBeInTheDocument();
+      // Base 45 + CON scaling (2 * level 5) = 55 max HP
+      expect(document.querySelector('.stat-compact.hp')).toHaveTextContent('35/55');
     });
 
     it('should display AC in sticky header', () => {
       renderCharacterSheet();
-      expect(screen.getByText('16')).toBeInTheDocument();
+      expect(document.querySelector('.stat-compact.ac')).toHaveTextContent('16');
     });
 
     it('should display initiative in sticky header', () => {
       renderCharacterSheet();
-      expect(screen.getByText('+2')).toBeInTheDocument();
+      expect(document.querySelector('.stat-compact.init')).toHaveTextContent('+2');
     });
 
     it('should display conditions in sticky header', () => {
+      // Active conditions are tracked in localStorage, not on the character record
+      localStorage.setItem(`conditions:${mockCharacter.id}`, JSON.stringify({
+        activeConditions: ['Poisoned'],
+        exhaustionLevel: 0
+      }));
+
       renderCharacterSheet();
-      expect(screen.getByText('Poisoned')).toBeInTheDocument();
+      expect(screen.getByLabelText(/open conditions tracker/i)).toBeInTheDocument();
+      expect(document.querySelector('.conditions-active-count')).toHaveTextContent('1');
     });
 
-    it('should toggle portrait visibility when button clicked', () => {
+    it('should toggle portrait highlight when button clicked', () => {
       renderCharacterSheet();
       const toggleButton = screen.getByLabelText(/toggle portrait/i);
-      
+      expect(toggleButton).toHaveClass('is-highlighted');
+
       fireEvent.click(toggleButton);
-      
-      // Portrait should still be in DOM but with hidden class
-      const portraitContainer = screen.getByAltText('Test Character').closest('.portrait-container');
-      expect(portraitContainer).toHaveClass('hidden');
+
+      expect(toggleButton).toHaveClass('is-muted');
     });
   });
 
@@ -390,79 +429,84 @@ describe('CharacterSheet', () => {
   describe('Tab Navigation', () => {
     it('should render all tabs', () => {
       renderCharacterSheet();
-      expect(screen.getByText('Abilities')).toBeInTheDocument();
-      expect(screen.getByText('Skills')).toBeInTheDocument();
-      expect(screen.getByText('Spells')).toBeInTheDocument();
-      expect(screen.getByText('Inventory')).toBeInTheDocument();
-      expect(screen.getByText('Features')).toBeInTheDocument();
+      // Tab buttons use icons with aria-labels, no visible text
+      expect(screen.getByLabelText('Abilities')).toBeInTheDocument();
+      expect(screen.getByLabelText('Skills')).toBeInTheDocument();
+      expect(screen.getByLabelText('Spells')).toBeInTheDocument();
+      expect(screen.getByLabelText('Inventory')).toBeInTheDocument();
+      expect(screen.getByLabelText('Features')).toBeInTheDocument();
     });
 
-    it('should start with Abilities tab active', () => {
+    it('should start with Bio tab active', () => {
       renderCharacterSheet();
-      const abilitiesTab = screen.getByText('Abilities').closest('button');
-      expect(abilitiesTab).toHaveClass('active');
+      const bioTab = screen.getByLabelText('Bio');
+      expect(bioTab).toHaveClass('active');
     });
 
-    it('should switch tabs when clicked', () => {
+    it('should switch tabs when clicked', async () => {
       renderCharacterSheet();
-      const skillsTab = screen.getByText('Skills');
+      const skillsTab = screen.getByLabelText('Skills');
       
       fireEvent.click(skillsTab);
       
-      expect(skillsTab.closest('button')).toHaveClass('active');
+      await waitFor(() => {
+        expect(skillsTab).toHaveClass('active');
+      });
       expect(screen.getByText('Athletics')).toBeInTheDocument();
     });
   });
 
   describe('Abilities Tab', () => {
+    // Passive skills/speeds/senses render as separate label/value spans in a
+    // shared `.passive-item` row rather than a single combined text node.
+    const getPassiveValue = (label) => {
+      const row = Array.from(document.querySelectorAll('.passive-item'))
+        .find((el) => el.textContent.includes(label));
+      return row?.querySelector('.passive-value')?.textContent;
+    };
+
     it('should display all ability scores', () => {
       renderCharacterSheet();
-      
-      expect(screen.getByText('16')).toBeInTheDocument(); // STR
-      expect(screen.getByText('14')).toBeInTheDocument(); // DEX
-      expect(screen.getByText('15')).toBeInTheDocument(); // CON
-      expect(screen.getByText('13')).toBeInTheDocument(); // INT
-      expect(screen.getByText('10')).toBeInTheDocument(); // WIS
-      expect(screen.getByText('8')).toBeInTheDocument(); // CHA
+
+      const scores = Array.from(document.querySelectorAll('.ability-score')).map((el) => el.textContent);
+      expect(scores).toEqual(['16', '14', '15', '13', '10', '8']);
     });
 
     it('should display ability modifiers', () => {
       renderCharacterSheet();
-      
-      expect(screen.getByText('+3')).toBeInTheDocument(); // STR mod
-      expect(screen.getByText('+2')).toBeInTheDocument(); // DEX/CON mod
-      expect(screen.getByText('+1')).toBeInTheDocument(); // INT mod
-      expect(screen.getByText('+0')).toBeInTheDocument(); // WIS mod
-      expect(screen.getByText('-1')).toBeInTheDocument(); // CHA mod
+
+      const mods = Array.from(document.querySelectorAll('.ability-modifier')).map((el) => el.textContent);
+      expect(mods).toEqual(['+3', '+2', '+2', '+1', '+0', '-1']);
     });
 
     it('should display saving throws with proficiency', () => {
       renderCharacterSheet();
       
       // STR and CON saves should be proficient
-      const strSave = screen.getByText(/strength/i).closest('.save');
-      expect(strSave).toHaveClass('proficient');
+      const strSave = Array.from(document.querySelectorAll('.save-item'))
+        .find((el) => /strength/i.test(el.textContent));
+      expect(strSave.querySelector('span')).toHaveClass('proficient');
     });
 
     it('should display passive skills', () => {
       renderCharacterSheet();
-      
-      expect(screen.getByText(/passive perception.*13/i)).toBeInTheDocument();
-      expect(screen.getByText(/passive insight.*10/i)).toBeInTheDocument();
-      expect(screen.getByText(/passive investigation.*11/i)).toBeInTheDocument();
+
+      expect(getPassiveValue('Passive Perception')).toBe('13');
+      expect(getPassiveValue('Passive Insight')).toBe('10');
+      expect(getPassiveValue('Passive Investigation')).toBe('11');
     });
 
     it('should display speeds', () => {
       renderCharacterSheet();
-      
-      expect(screen.getByText(/walk.*30/i)).toBeInTheDocument();
-      expect(screen.getByText(/climb.*15/i)).toBeInTheDocument();
+
+      expect(getPassiveValue('Walking Speed')).toBe('30 ft');
+      expect(getPassiveValue('Climb Speed')).toBe('15 ft');
     });
 
     it('should display senses', () => {
       renderCharacterSheet();
-      
-      expect(screen.getByText(/darkvision.*60/i)).toBeInTheDocument();
+
+      expect(getPassiveValue('Darkvision')).toBe('60 ft');
     });
   });
 
@@ -479,15 +523,15 @@ describe('CharacterSheet', () => {
     });
 
     it('should show proficiency icon for proficient skills', () => {
-      const athleticsRow = screen.getByText('Athletics').closest('.skill-row');
-      const proficiencyIcon = within(athleticsRow).getByRole('img', { hidden: true });
-      expect(proficiencyIcon).toBeInTheDocument();
+      const athleticsRow = screen.getByText('Athletics').closest('.skill-item');
+      expect(athleticsRow).toHaveClass('proficient');
+      expect(athleticsRow.querySelector('.skill-proficiency-icon')).toBeInTheDocument();
     });
 
     it('should show expertise icon for expertise skills', () => {
-      const stealthRow = screen.getByText('Stealth').closest('.skill-row');
-      const expertiseIcon = within(stealthRow).getByRole('img', { hidden: true });
-      expect(expertiseIcon).toBeInTheDocument();
+      const stealthRow = screen.getByText('Stealth').closest('.skill-item');
+      expect(stealthRow).toHaveClass('expertise');
+      expect(stealthRow.querySelector('.skill-proficiency-icon')).toBeInTheDocument();
     });
   });
 
@@ -498,26 +542,27 @@ describe('CharacterSheet', () => {
     });
 
     it('should display spell names', () => {
-      expect(screen.getByText('Fireball')).toBeInTheDocument();
+      // Wizard level 2 in mock data only grants level 1 slots, so only
+      // level-1 prepared spells (Shield) are shown; Fireball (level 3) isn't reachable.
       expect(screen.getByText('Shield')).toBeInTheDocument();
     });
 
     it('should group spells by level', () => {
-      expect(screen.getByText(/level 1/i)).toBeInTheDocument();
-      expect(screen.getByText(/level 3/i)).toBeInTheDocument();
+      // Levels are represented as roman-numeral subtab buttons, not "Level N" text
+      expect(screen.getByText('I')).toBeInTheDocument();
     });
 
     it('should show prepared status', () => {
-      const fireballRow = screen.getByText('Fireball').closest('.spell-row');
-      expect(within(fireballRow).getByText(/prepared/i)).toBeInTheDocument();
+      // Only prepared spells are listed at all (no separate "prepared" badge)
+      expect(screen.getByText('Shield').closest('.spell-clickable')).toBeInTheDocument();
     });
 
     it('should display spell details in modal when clicked', async () => {
-      fireEvent.click(screen.getByText('Fireball'));
+      fireEvent.click(screen.getByText('Shield'));
       
       await waitFor(() => {
-        expect(screen.getByRole('dialog')).toBeInTheDocument();
-        expect(screen.getByText(/bright streak flashes/i)).toBeInTheDocument();
+        expect(document.querySelector('.spell-detail-overlay')).toBeInTheDocument();
+        expect(screen.getByText(/invisible barrier of magical force/i)).toBeInTheDocument();
       });
     });
   });
@@ -527,18 +572,18 @@ describe('CharacterSheet', () => {
       renderCharacterSheet();
       
       // Level 5 should have +3 proficiency
-      expect(mockDerivedStats.proficiencyBonus).toBe(3);
+      expect(mockDerivedStats.proficiency).toBe(3);
     });
 
     it('should calculate ability modifiers correctly', () => {
       renderCharacterSheet();
       
       // STR 16 = +3
-      expect(mockDerivedStats.abilities.strength.modifier).toBe(3);
+      expect(mockDerivedStats.modifiers.strength).toBe(3);
       // DEX 14 = +2
-      expect(mockDerivedStats.abilities.dexterity.modifier).toBe(2);
+      expect(mockDerivedStats.modifiers.dexterity).toBe(2);
       // CHA 8 = -1
-      expect(mockDerivedStats.abilities.charisma.modifier).toBe(-1);
+      expect(mockDerivedStats.modifiers.charisma).toBe(-1);
     });
 
     it('should apply bonus engine to stats', () => {
@@ -546,10 +591,14 @@ describe('CharacterSheet', () => {
       
       expect(deriveCharacterStats).toHaveBeenCalledWith(
         expect.objectContaining({
-          ...mockCharacter,
-          skills: mockSkills,
-          spells: mockSpells,
-          features: mockFeatures
+          base: expect.objectContaining({
+            abilities: expect.objectContaining({
+              strength: mockCharacter.strength,
+              dexterity: mockCharacter.dexterity
+            }),
+            proficiency: 3
+          }),
+          bonuses: expect.any(Array)
         })
       );
     });
