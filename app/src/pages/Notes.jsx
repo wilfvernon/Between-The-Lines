@@ -22,6 +22,68 @@ function Notes() {
   const [updating, setUpdating] = useState(false);
   const [deletingId, setDeletingId] = useState('');
 
+  // Unsaved form drafts are kept in localStorage so they survive route changes and refreshes.
+  const draftStorageKey = user?.id ? `notes_draft_${user.id}` : null;
+  const [draftLoaded, setDraftLoaded] = useState(false);
+
+  useEffect(() => {
+    setDraftLoaded(false);
+    if (!draftStorageKey) return;
+
+    try {
+      const stored = localStorage.getItem(draftStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setTitle(typeof parsed.title === 'string' ? parsed.title : '');
+        setContent(typeof parsed.content === 'string' ? parsed.content : '');
+        setIsPublic(Boolean(parsed.isPublic));
+        setEditingId(typeof parsed.editingId === 'string' ? parsed.editingId : '');
+        setEditingTitle(typeof parsed.editingTitle === 'string' ? parsed.editingTitle : '');
+        setEditingContent(typeof parsed.editingContent === 'string' ? parsed.editingContent : '');
+        setEditingIsPublic(Boolean(parsed.editingIsPublic));
+        if (['write', 'my-notes', 'public'].includes(parsed.activeTab)) {
+          setActiveTab(parsed.activeTab);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse saved note draft:', e);
+    }
+
+    setDraftLoaded(true);
+  }, [draftStorageKey]);
+
+  useEffect(() => {
+    if (!draftStorageKey || !draftLoaded) return;
+
+    const hasDraft = Boolean(title || content || isPublic || editingId);
+    if (!hasDraft) {
+      localStorage.removeItem(draftStorageKey);
+      return;
+    }
+
+    localStorage.setItem(draftStorageKey, JSON.stringify({
+      title,
+      content,
+      isPublic,
+      editingId,
+      editingTitle,
+      editingContent,
+      editingIsPublic,
+      activeTab,
+    }));
+  }, [
+    draftStorageKey,
+    draftLoaded,
+    title,
+    content,
+    isPublic,
+    editingId,
+    editingTitle,
+    editingContent,
+    editingIsPublic,
+    activeTab,
+  ]);
+
   const loadNotes = useCallback(async () => {
     setLoading(true);
     setStatus('');
