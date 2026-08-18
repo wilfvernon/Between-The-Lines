@@ -148,7 +148,7 @@ const RARITY_ORDER = {
  * @param {Object} character - The character object with classes array
  * @returns {boolean} - True if proficient, false otherwise
  */
-const isWeaponProficient = (weapon, character, effectivePropertyNames = null) => {
+const isWeaponProficient = (weapon, character) => {
   if (!weapon || !character) return false;
 
   const normalizeToken = (value) => String(value || '')
@@ -221,13 +221,11 @@ const isWeaponProficient = (weapon, character, effectivePropertyNames = null) =>
   const hasMonk = classNames.includes('Monk');
   
   if (hasRogue || hasMonk) {
-    const properties = Array.isArray(effectivePropertyNames) && effectivePropertyNames.length > 0
-      ? effectivePropertyNames
-      : (weapon.raw_data?.properties || []).map((p) => p.name || p);
-    const normalizedPropertyNames = new Set(properties.map((property) => normalizePropertyName(property)));
-
-    const hasLight = normalizedPropertyNames.has('light');
-    const hasFinesse = normalizedPropertyNames.has('finesse');
+    const properties = weapon.raw_data?.properties || [];
+    const propertyNames = properties.map(p => p.name || p);
+    
+    const hasLight = propertyNames.includes('Light');
+    const hasFinesse = propertyNames.includes('Finesse');
     
     // Monk: proficient with Light Martial weapons
     if (hasMonk && hasLight) return true;
@@ -451,36 +449,6 @@ const normalizeBenefitType = (value) => String(value || '')
   .trim()
   .toLowerCase()
   .replace(/[\s-]+/g, '_');
-
-const normalizePropertyName = (value) => String(value || '')
-  .trim()
-  .toLowerCase()
-  .replace(/[\s-]+/g, '_');
-
-const toPropertyLabel = (token) => {
-  const normalized = normalizePropertyName(token);
-  if (!normalized) return '';
-
-  const labels = {
-    two_handed: 'Two-Handed',
-    ammunition: 'Ammunition',
-    finesse: 'Finesse',
-    heavy: 'Heavy',
-    light: 'Light',
-    loading: 'Loading',
-    reach: 'Reach',
-    special: 'Special',
-    thrown: 'Thrown',
-    versatile: 'Versatile'
-  };
-
-  if (labels[normalized]) return labels[normalized];
-
-  return normalized
-    .split('_')
-    .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part)
-    .join(' ');
-};
 
 const getSelectBenefit = (feature) => {
   const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
@@ -1829,6 +1797,37 @@ function CharacterSheet() {
 
   const visibleCharacterItems = (character.items || []).filter((item) => !isMagicItemHidden(item));
 
+  // Helper to extract initiative bonuses from active magic items
+  const getMagicItemInitiativeBonus = () => {
+    const inventory = Array.isArray(character?.inventory) ? character.inventory : [];
+    let totalBonus = 0;
+
+    inventory.forEach((inventoryItem) => {
+      const magicItem = inventoryItem?.magic_item;
+      if (!isActiveMagicInventoryItem(inventoryItem)) return;
+
+      const benefits = [
+        ...(Array.isArray(magicItem?.benefits) ? magicItem.benefits : []),
+        ...(magicItem?.benefits && typeof magicItem.benefits === 'object' && magicItem.benefits.type ? [magicItem.benefits] : [])
+      ];
+
+      benefits.forEach((benefit) => {
+        const type = String(benefit?.type || '').toLowerCase().replace(/[\s-]+/g, '_');
+        const amount = Number(benefit?.amount ?? benefit?.value ?? benefit?.bonus ?? 0);
+
+        if (type === 'initiative_bonus' || type === 'init_bonus') {
+          totalBonus += amount;
+        }
+      });
+
+      // Fallback: check for direct properties
+      const fallbackInitBonus = Number(magicItem?.initiative_bonus ?? magicItem?.raw_data?.initiative_bonus ?? magicItem?.properties?.initiative_bonus ?? 0);
+      totalBonus += fallbackInitBonus;
+    });
+
+    return totalBonus;
+  };
+
   // Collect bonuses from items, features, and character overrides
   // (Skill bonuses are now handled directly in SkillsTab from feature.benefits)
   
@@ -1875,8 +1874,14 @@ function CharacterSheet() {
     overrides: character.bonuses || []
   }) || [];
 
-  // Combine all bonuses (from features + ASIs)
-  const baseBonuses = [...bonusList, ...abilityScoreBonuses];
+  // Extract magic item initiative bonus and add to bonuses list
+  const magicItemInitiativeBonus = getMagicItemInitiativeBonus();
+  const magicItemInitiativeBonuses = magicItemInitiativeBonus !== 0
+    ? [{ target: 'initiative', value: magicItemInitiativeBonus, source: { type: 'item', label: 'Magic Item' } }]
+    : [];
+
+  // Combine all bonuses (from features + ASIs + magic items)
+  const baseBonuses = [...bonusList, ...abilityScoreBonuses, ...magicItemInitiativeBonuses];
 
   // Combine all bonuses (from features + ASIs + active conditional selections)
   const allBonuses = [...baseBonuses, ...conditionalBonuses];
@@ -1963,7 +1968,6 @@ function CharacterSheet() {
   const conModBonus = conMod * characterLevel;
   const effectiveBaseMaxHP = baseMaxHP + conModBonus;
   const hpBonusesFromFeatures = allBonuses.filter(b => b.target === 'maxHP').reduce((sum, b) => sum + b.value, 0);
-  const effectiveBonusAdjustedMaxHP = effectiveBaseMaxHP + hpBonusesFromFeatures;
   const effectiveDisplayMaxHP = baseMaxHP + conModBonus + hpBonusesFromFeatures + maxHPModifier;
 
   // These ARE derived modifiers (calculated from derived scores with bonuses applied)
@@ -2453,7 +2457,7 @@ function CharacterSheet() {
           setDeathSaveSuccesses={setDeathSaveSuccesses}
           deathSaveFailures={deathSaveFailures}
           setDeathSaveFailures={setDeathSaveFailures}
-          maxHP={effectiveBonusAdjustedMaxHP}
+          maxHP={effectiveBaseMaxHP}
           damageInput={damageInput}
           setDamageInput={setDamageInput}
           isOpen={isHPModalOpen}
@@ -2774,7 +2778,6 @@ const getMagicItemWeaponDisplayProfile = (inventoryItem, rawData = {}) => {
     meleeDamageType: rawData?.damage?.damage_type?.name || null,
     versatileDamageDice: rawData?.two_handed_damage?.damage_dice || null,
     versatileDamageType: rawData?.two_handed_damage?.damage_type?.name || null,
-    effectiveProperties: (rawData?.properties || []).map((p) => p?.name || p).filter(Boolean),
   };
 
   if (!magicItem) return profile;
@@ -2782,54 +2785,6 @@ const getMagicItemWeaponDisplayProfile = (inventoryItem, rawData = {}) => {
   const benefits = normalizeBenefitsInput(
     magicItem.benefits ?? magicItem.properties?.benefits ?? magicItem.properties
   );
-
-  const addedProperties = new Set();
-  const removedProperties = new Set();
-
-  const addProperty = (value) => {
-    const normalized = normalizePropertyName(value);
-    if (!normalized) return;
-    removedProperties.delete(normalized);
-    addedProperties.add(normalized);
-  };
-
-  const removeProperty = (value) => {
-    const normalized = normalizePropertyName(value);
-    if (!normalized) return;
-    addedProperties.delete(normalized);
-    removedProperties.add(normalized);
-  };
-
-  const addPropertyList = (values, applyFn) => {
-    if (!values) return;
-    if (Array.isArray(values)) {
-      values.forEach((entry) => applyFn(entry));
-      return;
-    }
-    if (typeof values === 'string') {
-      values.split(',').map((part) => part.trim()).filter(Boolean).forEach((entry) => applyFn(entry));
-    }
-  };
-
-  const applyPropertyChanges = (benefit) => {
-    addPropertyList(benefit?.add_properties, addProperty);
-    addPropertyList(benefit?.properties_add, addProperty);
-    addPropertyList(benefit?.grant_properties, addProperty);
-    addPropertyList(benefit?.remove_properties, removeProperty);
-    addPropertyList(benefit?.properties_remove, removeProperty);
-
-    const weaponProperties = benefit?.weapon_properties;
-    if (Array.isArray(weaponProperties)) {
-      addPropertyList(weaponProperties, addProperty);
-    } else if (weaponProperties && typeof weaponProperties === 'object') {
-      addPropertyList(weaponProperties.add, addProperty);
-      addPropertyList(weaponProperties.remove, removeProperty);
-    }
-
-    if (benefit?.finesse === true || String(benefit?.finesse || '').toLowerCase() === 'true') addProperty('finesse');
-    if (benefit?.grants_finesse === true || String(benefit?.grants_finesse || '').toLowerCase() === 'true') addProperty('finesse');
-    if (benefit?.remove_finesse === true || String(benefit?.remove_finesse || '').toLowerCase() === 'true') removeProperty('finesse');
-  };
 
   const applyOverride = (benefit) => {
     const meleeDice = benefit?.damage_dice_override ?? benefit?.damage_dice ?? benefit?.dice_override;
@@ -2863,35 +2818,11 @@ const getMagicItemWeaponDisplayProfile = (inventoryItem, rawData = {}) => {
   };
 
   benefits.forEach((benefit) => {
-    applyPropertyChanges(benefit);
     const type = normalizeBenefitType(benefit?.type);
     if (['weapon_damage_override', 'damage_override', 'weapon_damage_profile', 'weapon_bonus', 'magic_weapon_bonus'].includes(type)) {
       applyOverride(benefit);
     }
   });
-
-  if (magicItem?.finesse === true || String(magicItem?.finesse || '').toLowerCase() === 'true') {
-    addProperty('finesse');
-  }
-  if (magicItem?.properties?.finesse === true || String(magicItem?.properties?.finesse || '').toLowerCase() === 'true') {
-    addProperty('finesse');
-  }
-  if (magicItem?.raw_data?.finesse === true || String(magicItem?.raw_data?.finesse || '').toLowerCase() === 'true') {
-    addProperty('finesse');
-  }
-
-  const baseProperties = new Set(
-    (profile.effectiveProperties || [])
-      .map((property) => normalizePropertyName(property))
-      .filter(Boolean)
-  );
-
-  removedProperties.forEach((property) => baseProperties.delete(property));
-  addedProperties.forEach((property) => baseProperties.add(property));
-
-  profile.effectiveProperties = Array.from(baseProperties)
-    .map((property) => toPropertyLabel(property))
-    .filter(Boolean);
 
   const fallbackMeleeDice = magicItem?.damage_dice_override
     ?? magicItem?.raw_data?.damage_dice_override
@@ -3612,8 +3543,7 @@ function ItemModal({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [quantityInput, setQuantityInput] = useState(item?.quantity || 1);
   const [pocketInput, setPocketInput] = useState(item?.pocket || '');
-  const [itemNotes, setItemNotes] = useState(item?.notes || '');
-  const [isNotesExpanded, setIsNotesExpanded] = useState(Boolean(item?.notes));
+  const [trinketDescription, setTrinketDescription] = useState(item?.notes || '');
   const [isSaving, setIsSaving] = useState(false);
   const [showPocketDropdown, setShowPocketDropdown] = useState(false);
   const [itemUses, setItemUses] = useState(() => {
@@ -3637,8 +3567,7 @@ function ItemModal({
       setQuantityInput(item.quantity);
     }
     setPocketInput(item?.pocket || '');
-    setItemNotes(item?.notes || '');
-    setIsNotesExpanded(Boolean(item?.notes));
+    setTrinketDescription(item?.notes || '');
     setShowPocketDropdown(false);
     
     // Load stored uses for this item
@@ -3725,16 +3654,15 @@ function ItemModal({
   })();
   const isWeapon = isEquipmentLike && linkedEquipment.type?.toLowerCase().includes('weapon');
   const weaponDisplayProfile = isWeapon ? getMagicItemWeaponDisplayProfile(item, rawData) : null;
-  const effectiveWeaponProperties = weaponDisplayProfile?.effectiveProperties || [];
-  const hasItemNotesChanges = itemNotes !== (item?.notes || '');
+  const hasTrinketDescriptionChanges = isTrinket && (trinketDescription !== (item?.notes || ''));
 
-  const saveItemNotes = async () => {
-    if (!item?.id) return;
+  const saveTrinketDescription = async () => {
+    if (!isTrinket || !item?.id) return;
     setIsSaving(true);
     try {
       const { error } = await supabase
         .from('character_inventory')
-        .update({ notes: itemNotes.trim() || null })
+        .update({ notes: trinketDescription.trim() || null })
         .eq('id', item.id);
 
       if (error) throw error;
@@ -3743,8 +3671,8 @@ function ItemModal({
         await onQuantityUpdate();
       }
     } catch (err) {
-      console.error('Error updating item notes:', err);
-      setItemNotes(item?.notes || '');
+      console.error('Error updating trinket description:', err);
+      setTrinketDescription(item?.notes || '');
     } finally {
       setIsSaving(false);
     }
@@ -3866,7 +3794,7 @@ function ItemModal({
               <div className="item-weapon-properties">
                 {/* Proficiency Status */}
                 {(() => {
-                  const isProficient = isWeaponProficient(linkedEquipment, character, effectiveWeaponProperties);
+                  const isProficient = isWeaponProficient(linkedEquipment, character);
                   return (
                     <div className="item-row">
                       <span className="item-label">Proficiency:</span>
@@ -3898,10 +3826,10 @@ function ItemModal({
                   </div>
                 )}
                 
-                {effectiveWeaponProperties.length > 0 && (
+                {rawData.properties && rawData.properties.length > 0 && (
                   <div className="item-row">
                     <span className="item-label">Properties:</span>
-                    <span>{effectiveWeaponProperties.join(', ')}</span>
+                    <span>{rawData.properties.map((p) => p.name || p).join(', ')}</span>
                   </div>
                 )}
                 
@@ -4007,48 +3935,39 @@ function ItemModal({
             </>
           )}
 
-          <div className="item-section">
-            <button
-              type="button"
-              className="item-notes-toggle"
-              onClick={() => setIsNotesExpanded((prev) => !prev)}
-              aria-expanded={isNotesExpanded}
-              aria-controls="item-notes-panel"
-            >
-              <span className="item-label">Notes</span>
-              <span className={`item-notes-toggle-arrow ${isNotesExpanded ? 'expanded' : ''}`}>▼</span>
-            </button>
-
-            {isNotesExpanded && (
-              <div id="item-notes-panel" className="item-notes-panel">
-                <textarea
-                  className="item-notes-input"
-                  rows={4}
-                  value={itemNotes}
-                  onChange={(e) => setItemNotes(e.target.value)}
-                  disabled={isSaving}
-                  placeholder={isTrinket ? 'Add notes or description for this trinket...' : 'Add notes for this item...'}
-                />
-                {hasItemNotesChanges && (
-                  <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
-                    <button
-                      className="item-quantity-save"
-                      onClick={saveItemNotes}
-                      disabled={isSaving}
-                      title="Save notes"
-                      aria-label="Save notes"
-                    >
-                      <span
-                        className="item-quantity-save-icon"
-                        style={{ '--icon-url': `url(${new URL('../assets/icons/util/tick.svg', import.meta.url).href})` }}
-                        aria-hidden="true"
-                      />
-                    </button>
-                  </div>
-                )}
+          {isTrinket && (
+            <div className="item-section">
+              <div className="item-row" style={{ marginBottom: '8px' }}>
+                <span className="item-label">Description:</span>
               </div>
-            )}
-          </div>
+              <textarea
+                className="item-quantity-input"
+                rows={4}
+                value={trinketDescription}
+                onChange={(e) => setTrinketDescription(e.target.value)}
+                disabled={isSaving}
+                placeholder="Add notes or description for this trinket..."
+                style={{ width: '100%', resize: 'vertical' }}
+              />
+              {hasTrinketDescriptionChanges && (
+                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    className="item-quantity-save"
+                    onClick={saveTrinketDescription}
+                    disabled={isSaving}
+                    title="Save description"
+                    aria-label="Save description"
+                  >
+                    <span
+                      className="item-quantity-save-icon"
+                      style={{ '--icon-url': `url(${new URL('../assets/icons/util/tick.svg', import.meta.url).href})` }}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           
           {/* Pocket Selection */}
           <div className="item-section">

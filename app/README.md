@@ -1,223 +1,117 @@
-# Between the Lines - D&D Campaign Manager
+# Between the Lines - App status
 
-A Progressive Web App (PWA) for managing D&D campaign materials with Supabase backend.
+This is the current project overview for the live app and its active code paths.
 
-## Features
+Important: this repository contains three different kinds of documentation:
 
-- 📱 **PWA Support** - Install on mobile devices, works offline
-- 🔐 **Authentication** - Secure user login with Supabase
-- 📝 **Character Sheet** - Track your D&D character (coming soon)
-- 📚 **Bookshelf** - Campaign bookshelf (coming soon)
-- 🎨 **Galatea Fine Art** - Magic items shop gallery with modal details
-- 📝 **Notes** - Campaign notes management (coming soon)
-- 👑 **Admin Dashboard** - Admin tools (coming soon)
+- current app state: this README plus CURRENT_STATE.md
+- target product scope: FINAL_SCOPE.md
+- future refactor architecture: CLASS_SUBCLASS_SPECIES_REFACTOR_PLAN.md
+- regression requirements: TEST_SCOPE.md
 
-## Tech Stack
+If you are trying to understand the code as it exists today, start with CURRENT_STATE.md and the code in src/.
 
-- **Frontend**: React 18 + Vite
-- **Routing**: React Router v6
-- **Backend**: Supabase (Auth + Database)
-- **Styling**: Custom CSS
-- **PWA**: vite-plugin-pwa
+## Current status
+
+The app is an active React + Vite + Supabase project with a working character-sheet flow and multiple supporting modules.
+
+The character sheet is already a real feature rather than a stub. It is mounted in the main app shell and relies on derived stat logic, feature benefits, inventory, spells, and UI state management.
+
+## Active app areas
+
+- authentication and route guards
+- character loading and related data hydration
+- character sheet rendering and derived stat calculation
+- inventory and magic item behavior
+- spell casting and slot logic
+- feature and trait display
+- notes, bookshelf, admin tools
+
+## Stack
+
+- React 18
+- Vite
+- React Router
+- Supabase
+- Vitest + Testing Library + Playwright
+- custom CSS + PWA support
 
 ## Setup
-
-### 1. Install Dependencies
 
 ```bash
 cd app
 npm install
 ```
 
-### 2. Configure Supabase
+Configure environment variables:
 
-1. Create a Supabase project at [supabase.com](https://supabase.com)
-2. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-3. Add your Supabase credentials to `.env`:
-   ```
-   VITE_SUPABASE_URL=your-project-url
-   VITE_SUPABASE_ANON_KEY=your-anon-key
-   ```
+```bash
+cp .env.example .env
+```
 
-### 3. Run Development Server
+Then add:
+
+```bash
+VITE_SUPABASE_URL=your-project-url
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+Run locally:
 
 ```bash
 npm run dev
 ```
 
-Visit `http://localhost:5173`
-
-### 3.5 Database Tables for Admin Book Tools
-
-Run this SQL in Supabase SQL Editor:
-
-```sql
-create table if not exists public.books (
-   id uuid primary key default gen_random_uuid(),
-   title text not null,
-   author text not null,
-   cover_image_url text,
-   created_at timestamptz not null default now()
-);
-
-alter table public.books
-add column if not exists cover_image_url text;
-
-create table if not exists public.chapters (
-   id uuid primary key default gen_random_uuid(),
-   book_id uuid not null references public.books(id) on delete cascade,
-   title text not null,
-   body text not null,
-   created_at timestamptz not null default now()
-);
-
-alter table public.books enable row level security;
-alter table public.chapters enable row level security;
-
-create policy "admin can insert books"
-on public.books
-for insert
-to authenticated
-with check (auth.jwt() ->> 'email' = 'admin@candlekeep.sc');
-
-create policy "admin can update books"
-on public.books
-for update
-to authenticated
-using (auth.jwt() ->> 'email' = 'admin@candlekeep.sc')
-with check (auth.jwt() ->> 'email' = 'admin@candlekeep.sc');
-
-create policy "admin can delete books"
-on public.books
-for delete
-to authenticated
-using (auth.jwt() ->> 'email' = 'admin@candlekeep.sc');
-
-create policy "admin can insert chapters"
-on public.chapters
-for insert
-to authenticated
-with check (auth.jwt() ->> 'email' = 'admin@candlekeep.sc');
-
-create policy "admin can update chapters"
-on public.chapters
-for update
-to authenticated
-using (auth.jwt() ->> 'email' = 'admin@candlekeep.sc')
-with check (auth.jwt() ->> 'email' = 'admin@candlekeep.sc');
-
-create policy "admin can delete chapters"
-on public.chapters
-for delete
-to authenticated
-using (auth.jwt() ->> 'email' = 'admin@candlekeep.sc');
-
-create policy "authenticated can read books"
-on public.books
-for select
-to authenticated
-using (true);
-
-create policy "authenticated can read chapters"
-on public.chapters
-for select
-to authenticated
-using (true);
-```
-
-### 4. Build for Production
+## Useful commands
 
 ```bash
+npm run test:run
 npm run build
-npm run preview
+npm run test:e2e
+npm run lint
 ```
 
-## Deploy (Recommended)
+## Documentation map
 
-This app is a static Vite build, so Vercel and Netlify both work well.
+- CURRENT_STATE.md — what the app does today
+- FINAL_SCOPE.md — target product scope for the future app
+- CLASS_SUBCLASS_SPECIES_REFACTOR_PLAN.md — future data-model architecture
+- TEST_SCOPE.md — regression gate before refactor work
+- CHARACTER_SHEET_SPEC.md — sheet data contract notes and legacy spec material
+- SCHEMA_READINESS.md — database readiness notes
+- JSONB_SCHEMAS.md — data-shape notes
 
-### Option A: Vercel (quickest)
+## Current project structure
 
-1. Push this repo to GitHub.
-2. In Vercel, click **Add New Project** and import the repo.
-3. Set these project settings:
-   - Root Directory: `app`
-   - Build Command: `npm run build`
-   - Output Directory: `dist`
-4. Add environment variables:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-5. Deploy.
-
-`vercel.json` is included to handle client-side routes with `BrowserRouter`.
-
-### Option B: Netlify
-
-1. In Netlify, create a new site from your GitHub repo.
-2. Set build settings:
-   - Base directory: `app`
-   - Build command: `npm run build`
-   - Publish directory: `app/dist`
-3. Add environment variables:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-4. Deploy.
-
-`public/_redirects` is included so route refreshes do not 404.
-
-### Share with Friends
-
-After deploy, send them the site URL. Because this is a PWA, they can install it:
-- Mobile: browser menu -> **Add to Home Screen**
-- Desktop: use browser install prompt/icon
-
-## Project Structure
-
-```
+```text
 app/
-├── public/
-│   └── items.json          # Magic items data
 ├── src/
+│   ├── App.jsx
 │   ├── components/
-│   │   ├── Gallery.jsx     # Items gallery grid
-│   │   ├── Layout.jsx      # App layout with navigation
-│   │   ├── Modal.jsx       # Item detail modal
-│   │   └── ProtectedRoute.jsx
 │   ├── context/
-│   │   └── AuthContext.jsx # Authentication state
+│   ├── hooks/
 │   ├── lib/
-│   │   └── supabase.js     # Supabase client config
 │   ├── pages/
-│   │   ├── AdminDashboard.jsx
-│   │   ├── Bookshelf.jsx   # Campaign bookshelf
-│   │   ├── CharacterSheet.jsx
-│   │   ├── GalateaFineArt.jsx # Magic items shop
-│   │   ├── Login.jsx       # Authentication page
-│   │   └── Notes.jsx
-│   ├── App.jsx             # Main app with routing
-│   └── main.jsx            # Entry point
-└── vite.config.js          # Vite + PWA config
+│   ├── test/
+│   └── features/
+├── e2e/
+├── migrations/
+├── public/
+├── scripts/
+├── README.md
+├── CURRENT_STATE.md
+├── FINAL_SCOPE.md
+├── TEST_SCOPE.md
+├── CLASS_SUBCLASS_SPECIES_REFACTOR_PLAN.md
+├── ...
+└── package.json
 ```
 
-## Authentication
+## Note on status
 
-The app requires login to access any content. Pre-created user accounts are managed through Supabase Auth.
+The app is in active development and is not yet a finished D&D rules engine. The current priority is to stabilize feature- and stat-derived behavior while the refactor work is being prepared.
 
-## PWA Installation
-
-### On Mobile (iOS/Android):
-1. Open the app in your browser
-2. Tap Share (iOS) or Menu (Android)
-3. Select "Add to Home Screen"
-
-### On Desktop:
-1. Look for the install icon in your browser's address bar
-2. Click to install as a desktop app
-
-## Next Steps
+This project is currently in a transition point: the sheet is live, but the data model and some feature architecture are still being cleaned up.
 
 - [ ] Set up Supabase credentials in `.env`
 - [ ] Migrate items from JSON to Supabase database

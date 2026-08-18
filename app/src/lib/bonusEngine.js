@@ -931,24 +931,6 @@ const benefitHandlers = {
   },
 
   /**
-   * weapon_attack_ability: Metadata-only benefit consumed by combat UI.
-   * Example: { type: "weapon_attack_ability", ability_mod: "finesse" }
-   * No direct numeric bonus is emitted by the bonus engine.
-   */
-  weapon_attack_ability: () => {
-    return [];
-  },
-
-  /**
-   * weapon_property: Metadata-only benefit consumed by combat UI.
-   * Example: { type: "weapon_property", add_properties: ["finesse"] }
-   * No direct numeric bonus is emitted by the bonus engine.
-   */
-  weapon_property: () => {
-    return [];
-  },
-
-  /**
    * stance: Mutually exclusive stance system
    * Only the active stance's nested benefits apply
    * Structure: { type: "stance", stances: [{ name: "X", benefits: [...] }, ...] }

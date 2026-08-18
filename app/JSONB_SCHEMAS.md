@@ -239,20 +239,16 @@ Hazel's Glimmercloak:
 
 ### `magic_items.benefits` (JSONB, nullable)
 
-Structured mechanics for magic item behavior, especially weapon overrides.
+Structured mechanics for magic item behavior: weapon overrides, spellcasting bonuses, and initiative.
 
 ```typescript
 Array<
-  // Shared/legacy bonus entries
+  // Weapon bonuses
   | { type: 'weapon_bonus' | 'magic_weapon_bonus'; amount?: number; value?: number; applies_to?: 'attack' | 'damage' | 'attack_and_damage'; bonus_type?: string }
   | { type: 'weapon_attack_bonus' | 'melee_weapon_attack_bonus'; amount?: number; value?: number; bonus_source?: string; weapon_property?: string; versatile?: number; bonus_type?: string }
   | { type: 'weapon_damage_bonus' | 'melee_weapon_damage_bonus'; amount?: number; value?: number; weapon_property?: string; versatile?: number; bonus_type?: string }
   | { type: 'weapon_damage_override' | 'damage_override' | 'weapon_damage_profile'; damage_dice_override?: string; versatile_damage_dice_override?: string; damage_type_override?: string; ignore_damage_mod?: boolean }
-
-  // New: choose the attack/damage ability used by the weapon
   | { type: 'weapon_attack_ability'; ability_mod: 'strength' | 'dexterity' | 'constitution' | 'intelligence' | 'wisdom' | 'charisma' | 'finesse' | 'spellcasting' | string }
-
-  // New: mutate effective weapon properties at runtime
   | {
       type: 'weapon_property';
       add_properties?: string[] | string;      // e.g. ['finesse', 'versatile']
@@ -265,27 +261,30 @@ Array<
       grants_finesse?: boolean;                 // alias
       remove_finesse?: boolean;
     }
+
+  // Spell bonuses
+  | { type: 'spell_attack_bonus'; amount?: number; value?: number; bonus?: number }
+  | { type: 'spell_save_dc_bonus' | 'spell_dc_bonus'; amount?: number; value?: number; bonus?: number }
+  | { type: 'spellcasting_bonus' | 'spell_bonus'; amount?: number; value?: number; applies_to?: 'attack' | 'dc' | 'attack_and_dc' }
+
+  // Initiative bonuses
+  | { type: 'initiative_bonus' | 'init_bonus'; amount?: number; value?: number; bonus?: number; bonus?: 'proficiency' | string }
 >;
 ```
 
 Notes:
 
-- `ability_mod: 'finesse'` applies finesse-style STR/DEX selection and also marks the weapon as effectively `Finesse`.
-- `ability_mod: 'spellcasting'` uses the character spellcasting modifier for weapon attack and ability-based damage.
-- `add_properties` accepts any property token; common values include `finesse`, `light`, `thrown`, `reach`, and `versatile`.
-- Property mutations affect combat calculations and item modal property display in current runtime.
+- **Weapon properties**: `ability_mod: 'finesse'` applies finesse-style STR/DEX selection; `ability_mod: 'spellcasting'` uses spellcasting modifier for attack and damage.
+- **Spell bonuses**: `spell_attack_bonus` increases spell attack rolls; `spell_save_dc_bonus` increases spell save DCs. Use `spellcasting_bonus` with `applies_to: 'attack'|'dc'|'attack_and_dc'` for both.
+- **Initiative bonuses**: `initiative_bonus` or `init_bonus` adds to initiative rolls. Use `bonus: 'proficiency'` or a numeric `amount`.
+- **Activation**: Spell/initiative bonuses only apply when the item is equipped and (if it requires attunement) attuned.
 
-Example (Longsword gains finesse + versatile):
+Examples:
 ```json
 [
-  {
-    "type": "weapon_attack_ability",
-    "ability_mod": "finesse"
-  },
-  {
-    "type": "weapon_property",
-    "add_properties": ["finesse", "versatile"]
-  }
+  { "type": "spell_attack_bonus", "amount": 1 },
+  { "type": "spell_save_dc_bonus", "amount": 2 },
+  { "type": "initiative_bonus", "amount": 3 }
 ]
 ```
 

@@ -1,5 +1,10 @@
 # Character Sheet System - FINAL SCOPE
 
+This document is the product target and future-state roadmap. It is not meant to describe the current implementation in the app.
+
+For the current app reality, see CURRENT_STATE.md.
+For the refactor architecture, see CLASS_SUBCLASS_SPECIES_REFACTOR_PLAN.md.
+
 ## 🎯 Core Purpose
 A **mobile-first PWA character sheet** for your 6-person D&D 2024 party. Players use physical dice but track everything else digitally.
 

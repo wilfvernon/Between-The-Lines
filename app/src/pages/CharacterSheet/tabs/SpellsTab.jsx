@@ -244,72 +244,39 @@ export default function SpellsTab({ character, spells, loading, proficiencyBonus
     };
   }, [character?.id, hasRitualAdept, classNames, classNamesKey]);
   
+  // Initialize slotsUsed from localStorage immediately
+  const [slotsUsed, setSlotsUsed] = useState(() => {
+    if (!character?.id && !character?.name) return {};
+    const key = character?.id 
+      ? `spellSlotsUsed:${character.id}` 
+      : `spellSlotsUsed:${character.name}`;
+    try {
+      const stored = localStorage.getItem(key);
+      const loaded = stored ? JSON.parse(stored) : {};
+      console.log('Initializing spell slots from localStorage:', { key, loaded });
+      return loaded;
+    } catch (error) {
+      console.warn('Failed to initialize spell slots from localStorage', error);
+      return {};
+    }
+  });
+
   const slotsStorageKey = character?.id
     ? `spellSlotsUsed:${character.id}`
     : character?.name
       ? `spellSlotsUsed:${character.name}`
       : null;
 
-  const [slotsUsed, setSlotsUsed] = useState({});
-  const [slotsLoaded, setSlotsLoaded] = useState(false);
-
-  // Rehydrate spell slot usage whenever the active character key changes.
-  useEffect(() => {
-    if (!slotsStorageKey) {
-      setSlotsUsed({});
-      setSlotsLoaded(false);
-      return;
-    }
-
-    const parseSlots = (rawValue) => {
-      if (!rawValue) return {};
-      try {
-        const parsed = JSON.parse(rawValue);
-        return parsed && typeof parsed === 'object' ? parsed : {};
-      } catch {
-        return {};
-      }
-    };
-
-    let loaded = {};
-
-    try {
-      const stored = localStorage.getItem(slotsStorageKey);
-      loaded = parseSlots(stored);
-
-      // Migration fallback: if id-keyed storage is empty, reuse prior name-keyed data.
-      if (Object.keys(loaded).length === 0 && character?.id && character?.name) {
-        const legacyNameKey = `spellSlotsUsed:${character.name}`;
-        if (legacyNameKey !== slotsStorageKey) {
-          const legacyStored = localStorage.getItem(legacyNameKey);
-          const legacyLoaded = parseSlots(legacyStored);
-          if (Object.keys(legacyLoaded).length > 0) {
-            loaded = legacyLoaded;
-            localStorage.setItem(slotsStorageKey, JSON.stringify(legacyLoaded));
-          }
-        }
-      }
-    } catch (error) {
-      console.warn('Failed to initialize spell slots from localStorage', error);
-      loaded = {};
-    }
-
-    console.log('Initializing spell slots from localStorage:', { key: slotsStorageKey, loaded });
-    setSlotsUsed(loaded);
-    setSlotsLoaded(true);
-  }, [slotsStorageKey, character?.id, character?.name]);
-
   // Save to localStorage whenever slotsUsed changes
   useEffect(() => {
     if (!slotsStorageKey) return;
-    if (!slotsLoaded) return;
     try {
       console.log('Saving spell slots to localStorage:', { key: slotsStorageKey, slotsUsed });
       localStorage.setItem(slotsStorageKey, JSON.stringify(slotsUsed));
     } catch (error) {
       console.warn('Failed to save spell slots to localStorage', error);
     }
-  }, [slotsStorageKey, slotsUsed, slotsLoaded]);
+  }, [slotsStorageKey, slotsUsed]);
 
   // Reset spell slot usage after long rest
   useEffect(() => {
