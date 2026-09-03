@@ -68,6 +68,8 @@ These are the guardrails for the data-model refactor.
 Required checks:
 - legacy feature payloads still render
 - `benefits` and `benefit` inputs resolve identically
+- existing feat spell grants retain Fey Touched-style free-use behavior by default
+- `type: 'spell_preparation'` feat benefits are slot-gated and grant no free uses
 - class/subclass/species source tags still resolve to the same user-visible behavior
 - runtime state remains separate from feature definition data
 - old and new shapes produce equivalent derived stats

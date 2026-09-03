@@ -746,7 +746,25 @@ const benefitHandlers = {
    *  - { type: "spell_damage_bonus", spells: ["Eldritch Blast"], add_modifier: true } (uses spellcasting ability)
    */
   spell_damage_bonus: (benefit, baseCharacterData = {}, source) => {
-    if (!Array.isArray(benefit.spells) || benefit.spells.length === 0) return [];
+    let spellNames = Array.isArray(benefit.spells) ? benefit.spells : [];
+    const spellLevel = benefit.spell_level ?? benefit.spellLevel;
+    const spellLists = benefit.spell_lists ?? benefit.spellLists;
+
+    if (spellNames.length === 0 && Array.isArray(spellLists) && Array.isArray(baseCharacterData.spells)) {
+      spellNames = baseCharacterData.spells
+        .map((entry) => entry?.spell || entry)
+        .filter((spell) => {
+          if (!spell?.name) return false;
+          if (spellLevel !== undefined && Number(spell.level) !== Number(spellLevel)) return false;
+          const lists = Array.isArray(spell.spell_lists) ? spell.spell_lists : [];
+          return spellLists.some((list) => lists.some((spellList) => (
+            String(spellList).trim().toLowerCase() === String(list).trim().toLowerCase()
+          )));
+        })
+        .map((spell) => spell.name);
+    }
+
+    if (spellNames.length === 0) return [];
 
     let bonusValue = 0;
 
@@ -773,7 +791,7 @@ const benefitHandlers = {
     if (bonusValue === 0) return [];
 
     // Create bonuses for each spell
-    const bonuses = benefit.spells.map(spellName => ({
+    const bonuses = spellNames.map(spellName => ({
       target: `spell.${spellName}`,
       value: bonusValue,
       type: 'untyped',

@@ -217,6 +217,40 @@ describe('bonusEngine', () => {
         value: -5
       });
     });
+
+    it('should apply a filtered spell damage bonus to matching cantrips', () => {
+      const bonuses = collectBonuses({
+        items: [],
+        features: [{
+          name: 'Potent Spellcasting',
+          benefits: {
+            type: 'spell_damage_bonus',
+            spell_lists: ['Cleric'],
+            spell_level: 0,
+            modifier: 'wisdom_modifier'
+          }
+        }],
+        baseCharacterData: {
+          wisdom: 16,
+          spells: [
+            { spell: { name: 'Sacred Flame', level: 0, spell_lists: ['Cleric'] } },
+            { spell: { name: 'Guidance', level: 0, spell_lists: ['Cleric'] } },
+            { spell: { name: 'Bless', level: 1, spell_lists: ['Cleric'] } },
+            { spell: { name: 'Fire Bolt', level: 0, spell_lists: ['Wizard'] } }
+          ]
+        },
+        overrides: []
+      });
+
+      expect(bonuses).toEqual(expect.arrayContaining([
+        expect.objectContaining({ target: 'spell.Sacred Flame', value: 3 }),
+        expect.objectContaining({ target: 'spell.Guidance', value: 3 })
+      ]));
+      expect(bonuses).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ target: 'spell.Bless' }),
+        expect.objectContaining({ target: 'spell.Fire Bolt' })
+      ]));
+    });
   });
 
   describe('deriveCharacterStats', () => {

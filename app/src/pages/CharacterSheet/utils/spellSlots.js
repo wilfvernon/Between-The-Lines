@@ -174,3 +174,15 @@ export const getSpellcastingInfoFromClasses = (classes = []) => {
 export const getSpellSlotsFromClasses = (classes = []) => {
   return getSpellcastingInfoFromClasses(classes).slots;
 };
+
+export const hasAppropriateSpellSlot = (spellLevel, spellcastingInfo) => {
+  const level = Number(spellLevel);
+  if (!Number.isFinite(level) || level <= 0) return true;
+  if (!spellcastingInfo) return false;
+  if (spellcastingInfo.mode === 'warlock') {
+    return level <= Number(spellcastingInfo.pactSlotLevel || 0);
+  }
+  return spellcastingInfo.slots
+    .slice(level - 1)
+    .some((slotCount) => Number(slotCount) > 0);
+};

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getSpellcastingInfoFromClasses } from '../utils/spellSlots';
+import { getSpellcastingInfoFromClasses, hasAppropriateSpellSlot } from '../utils/spellSlots';
 import { parseCastingTime } from '../../../lib/spellUtils.jsx';
 import { supabase } from '../../../lib/supabase';
 import SpellDetailModal from '../../../components/SpellDetailModal';
@@ -318,12 +318,14 @@ export default function SpellsTab({ character, spells, loading, proficiencyBonus
   }, [longRestVersion]);
 
   const safeSpells = Array.isArray(spells) ? spells : [];
+  const spellcastingInfo = getSpellcastingInfoFromClasses(character.classes || []);
 
   // Warlocks are known-spell casters in this app flow, so show all known spells.
   // Other casters keep prepared-only filtering.
   const visibleSpells = safeSpells.filter(cs => {
     const spell = cs.spell;
     if (!spell) return false;
+    if (cs.requires_spell_slot && !hasAppropriateSpellSlot(spell.level, spellcastingInfo)) return false;
     if (isWarlockClass) return true;
     // Include cantrips (level 0), always prepared spells, or prepared leveled spells
     return spell.level === 0 || cs.always_prepared || cs.is_prepared;
@@ -363,7 +365,6 @@ export default function SpellsTab({ character, spells, loading, proficiencyBonus
   });
   const equippedWeapon = equippedWeaponItem?.equipment || equippedWeaponItem?.magic_item?.equipment || equippedWeaponItem?.magic_item || null;
 
-  const spellcastingInfo = getSpellcastingInfoFromClasses(character.classes || []);
   const spellSlots = spellcastingInfo.slots;
   const isWarlockPactMagic = spellcastingInfo.mode === 'warlock';
   const warlockPactLevel = spellcastingInfo.pactSlotLevel;

@@ -1897,6 +1897,7 @@ function CharacterSheet() {
       ...abilityScoresWithASI,
       level: Math.max(1, Number(character?.level) || 1),
       classes: Array.isArray(character?.classes) ? character.classes : [],
+      spells: character.spells || [],
       proficiency: proficiencyBonus,
       shield_bonus: getEquippedShieldBonus(character.inventory, character, featuresToProcess, {
         activeSelections: activeFeatureSelections,
@@ -1933,7 +1934,8 @@ function CharacterSheet() {
       initiativeBase: baseMods.dexterity,
       passivePerceptionBase: 10 + baseMods.wisdom,
       senses: character.senses || [],
-      speeds: character.speeds || {}
+      speeds: character.speeds || {},
+      spells: character.spells || []
     },
     bonuses: allBonuses
   });
@@ -1957,7 +1959,8 @@ function CharacterSheet() {
       initiativeBase: baseMods.dexterity,
       passivePerceptionBase: 10 + baseMods.wisdom,
       senses: character.senses || [],
-      speeds: character.speeds || {}
+      speeds: character.speeds || {},
+      spells: character.spells || []
     },
     bonuses: allBonuses
   });

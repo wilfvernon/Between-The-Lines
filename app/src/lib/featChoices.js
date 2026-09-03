@@ -101,7 +101,21 @@ export function normalizeFeatChoices(featEntry) {
         .map((selection) => ({ name: selection.optionName, uses: undefined }))
     : [];
 
-  const grantedSpells = [...staticSpells, ...newShapeSpells, ...oldShapeSpells, ...labelSpells]
+  const slotGatedBenefits = Array.isArray(benefits)
+    ? benefits.filter((benefit) => benefit?.type === 'spell_preparation')
+    : benefits?.type === 'spell_preparation'
+      ? [benefits]
+      : [];
+  const slotGatedSpells = slotGatedBenefits.flatMap((benefit) => (
+    Array.isArray(benefit.spells) ? benefit.spells : []
+  )).map((spell) => typeof spell === 'string' ? { name: spell } : spell)
+    .filter((spell) => spell && typeof spell.name === 'string' && spell.name.trim())
+    .map((spell) => ({
+      name: spell.name,
+      requires_spell_slot: true
+    }));
+
+  const grantedSpells = [...staticSpells, ...newShapeSpells, ...oldShapeSpells, ...labelSpells, ...slotGatedSpells]
     .reduce((acc, spell) => {
       const key = spell.name.trim().toLowerCase();
       if (!key) return acc;

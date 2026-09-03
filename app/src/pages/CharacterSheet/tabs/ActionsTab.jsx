@@ -868,6 +868,19 @@ function resolveWeaponAttackAbility({
   return 'strength';
 }
 
+function getFeatureWeaponAbilityOptions(character) {
+  return (character?.features || []).flatMap((feature) => {
+    const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
+    return benefits
+      .filter((benefit) => normalizeBenefitType(benefit?.type) === 'weapon_attack_ability')
+      .map((benefit) => ({
+        ability: normalizeAbilityOverride(benefit?.ability_mod ?? benefit?.ability_modifier ?? benefit?.ability),
+        label: benefit?.label || feature?.name || 'Feature'
+      }))
+      .filter((option) => option.ability);
+  });
+}
+
 function isTruthyFlag(value) {
   if (value === true) return true;
   if (typeof value === 'number') return value === 1;
@@ -1278,6 +1291,7 @@ export default function ActionsTab({
   const [isSpellModalOpen, setIsSpellModalOpen] = useState(false);
   const [sneakModifierUses, setSneakModifierUses] = useState({});
   const [channelDivinityUsesState, setChannelDivinityUsesState] = useState(0);
+  const [weaponAbilityToggles, setWeaponAbilityToggles] = useState({});
   const [limitGaugeDraftValues, setLimitGaugeDraftValues] = useState({});
   const characterLevel = useMemo(() => getCharacterLevel(character), [character]);
 
@@ -1450,12 +1464,21 @@ export default function ActionsTab({
         const isRanged = range > 5 || longRange;
 
         // Choose ability: supports magic item ability overrides (including finesse/spellcasting)
-        const abilityUsed = resolveWeaponAttackAbility({
+        const featureAbilityOptions = getFeatureWeaponAbilityOptions(character);
+        const selectedFeatureAbility = featureAbilityOptions.find((option) => weaponAbilityToggles[item.id]);
+        const abilityUsed = selectedFeatureAbility
+          ? resolveWeaponAttackAbility({
+            hasFinesse,
+            isRanged,
+            derivedMods,
+            attackAbilityOverride: selectedFeatureAbility.ability
+          })
+          : resolveWeaponAttackAbility({
           hasFinesse,
           isRanged,
           derivedMods,
           attackAbilityOverride: magicWeaponModifiers.attackAbilityOverride
-        });
+          });
 
         const abilityMod = abilityUsed === 'spellcasting'
           ? getSpellcastingAbilityMod(character, derivedMods)
@@ -1504,6 +1527,8 @@ export default function ActionsTab({
           damageBonus,
           versatileDamageBonus,
           abilityUsed,
+          featureAbilityOptions,
+          featureAbilityEnabled: Boolean(selectedFeatureAbility),
           range: isRanged || hasThrown ? `${range}${longRange ? `/${longRange}` : ''} ft` : `${range} ft`,
           properties: propertyNames,
           versatile: hasVersatile,
@@ -1673,7 +1698,7 @@ export default function ActionsTab({
     });
     
     return attacks;
-  }, [character?.features, character?.inventory, derivedMods, proficiencyBonus]);
+  }, [character?.features, character?.inventory, derivedMods, proficiencyBonus, weaponAbilityToggles]);
 
   const allAttacks = weaponAttacks.concat(featureAttacks).concat(unarmedStrike ? [unarmedStrike] : []);
 
@@ -2355,6 +2380,21 @@ export default function ActionsTab({
                       <div key={`${attack.id}-name`} className="action-row action-name-row" >
                         <div className="action-name">
                           <h4>{attack.name}</h4>
+                          {attack.featureAbilityOptions?.length > 0 && (
+                            <button
+                              type="button"
+                              className={`attack-ability-toggle${attack.featureAbilityEnabled ? ' active' : ''}`}
+                              aria-pressed={attack.featureAbilityEnabled}
+                              onClick={() => setWeaponAbilityToggles((previous) => (
+                                previous[attack.inventoryItem.id]
+                                  ? {}
+                                  : { [attack.inventoryItem.id]: true }
+                              ))}
+                              title={`Use ${attack.featureAbilityOptions[0].ability} for this attack`}
+                            >
+                              {attack.featureAbilityEnabled ? 'CHA' : 'STR/DEX'}
+                            </button>
+                          )}
                           {!attack.isProficient && <span className="not-proficient">Not Proficient</span>}
                           {attack.masteryName && (
                             <span className={attack.hasMastery ? 'weapon-mastery mastery-unlocked' : 'weapon-mastery'}>

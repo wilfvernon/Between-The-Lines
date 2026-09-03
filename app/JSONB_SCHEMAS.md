@@ -451,6 +451,16 @@ Spell-granting feat (Fey Touched):
 }
 ```
 
+Slot-gated prepared spells (Conjuration Adept):
+```json
+{
+  "type": "spell_preparation",
+  "spells": ["Spell Name", "Another Spell"]
+}
+```
+
+The `spell_preparation` benefit is a feat `benefits` object. It is intentionally separate from the existing `benefits.spells.grants` and `choices.spellsChosen` paths. It stores spell identities only; spell level comes exclusively from the matching row in `spells`. The character sheet uses the fetched spell level to determine whether the character has an appropriate slot. It does not grant free castings or create a spell-use tracker. Existing feat spell grants continue to use the Fey Touched-style behavior by default.
+
 Expertise with level-based scaling (Bard Expertise):
 ```json
 {
@@ -460,7 +470,29 @@ Expertise with level-based scaling (Bard Expertise):
 }
 ```
 
+Filtered spell damage benefit (Potent Spellcasting):
+```json
+{
+  "type": "spell_damage_bonus",
+  "spell_lists": ["Cleric"],
+  "spell_level": 0,
+  "modifier": "wisdom_modifier"
+}
+```
+
+When `spells` is omitted, the bonus engine resolves spell names from the character's fetched spell records using `spell_lists` and `spell_level`. Spell metadata remains owned by the `spells` table. This adds the modifier to matching spell damage only; it does not affect attack rolls or non-matching spells.
+
 Note: For features granting expertise, use the `skill_expertise` benefit type in `character_features.benefits` (see Character Features Table section).
+
+Weapon ability toggle (Pact of the Blade-style feature):
+```json
+{
+  "type": "weapon_attack_ability",
+  "ability_mod": "charisma"
+}
+```
+
+This reuses the existing `weapon_attack_ability` metadata path. The character sheet adds a toggle to each eligible equipped weapon's attack action. The player uses that toggle to designate the active Pact weapon. When enabled, the existing attack calculation uses the declared ability modifier for both the attack roll and damage. The benefit does not duplicate weapon data or create a numeric bonus.
 
 ---
 

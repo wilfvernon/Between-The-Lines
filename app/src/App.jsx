@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -16,42 +16,33 @@ import AdminDashboard from './pages/AdminDashboard';
 import './App.css';
 
 function App() {
-  const [fontsReady, setFontsReady] = useState(false);
+  const fontLoadTimeout = (promise, timeoutMs) => Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(resolve, timeoutMs))
+  ]);
 
   useEffect(() => {
-    let isMounted = true;
-
     const waitForFonts = async () => {
-      if (document.fonts && document.fonts.ready) {
-        await Promise.allSettled([
-          document.fonts.load('400 1em "Goudy Bookletter 1911"'),
-          document.fonts.load('400 1em "Libre Baskerville"'),
-          document.fonts.load('400 1em "Inter"'),
-          document.fonts.load('400 1em "Cormorant Unicase"'),
-          document.fonts.load('400 1em "Medieval Sharp"'),
-        ]);
-        await document.fonts.ready;
+      try {
+        if (document.fonts && document.fonts.ready) {
+          await fontLoadTimeout(Promise.allSettled([
+            document.fonts.load('400 1em "Goudy Bookletter 1911"'),
+            document.fonts.load('400 1em "Libre Baskerville"'),
+            document.fonts.load('400 1em "Inter"'),
+            document.fonts.load('400 1em "Cormorant Unicase"'),
+            document.fonts.load('400 1em "Medieval Sharp"'),
+            document.fonts.ready,
+          ]), 3000);
+        }
+      } catch (error) {
+        console.warn('Font loading failed; continuing with fallback fonts:', error);
       }
 
-      if (isMounted) {
-        setFontsReady(true);
-      }
+      // Font loading is progressive and must not block the first screen.
     };
 
     waitForFonts();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
-
-  if (!fontsReady) {
-    return (
-      <div className="route-loading">
-        <img src="/crest.png" alt="" className="loading-crest" />
-      </div>
-    );
-  }
 
   return (
     <AuthProvider>

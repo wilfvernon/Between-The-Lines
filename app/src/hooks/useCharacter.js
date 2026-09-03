@@ -166,6 +166,36 @@ const normalizeFeatureBenefitsInput = (benefits) => {
   return [];
 };
 
+const isSupabaseTimingEnabled = () => {
+  try {
+    return import.meta.env.DEV || window.localStorage.getItem('debug:supabase-timing') === 'true';
+  } catch {
+    return false;
+  }
+};
+
+const timedSupabaseOperation = async (label, operation) => {
+  const startedAt = performance.now();
+  try {
+    const result = await operation();
+    if (isSupabaseTimingEnabled()) {
+      console.info(`[supabase timing] ${label}: ${Math.round(performance.now() - startedAt)}ms`, {
+        status: result?.error ? 'error' : 'ok',
+        error: result?.error?.message || null
+      });
+    }
+    return result;
+  } catch (error) {
+    if (isSupabaseTimingEnabled()) {
+      console.info(`[supabase timing] ${label}: ${Math.round(performance.now() - startedAt)}ms`, {
+        status: 'rejected',
+        error: error?.message || String(error)
+      });
+    }
+    throw error;
+  }
+};
+
 const buildClassLevelMap = (classes = []) => {
   const map = new Map();
   (classes || []).forEach((entry) => {
@@ -385,7 +415,8 @@ export const useCharacter = ({ user, isAdmin }) => {
           feat_granted: sourceType === 'feat',
           feature_granted: sourceType === 'feature',
           item_granted: sourceType === 'item',
-          feat_uses: explicitUses,
+          feat_uses: grant.requires_spell_slot ? undefined : explicitUses,
+          requires_spell_slot: grant.requires_spell_slot === true,
           feat_source: grant.source
         };
         return;
@@ -402,7 +433,8 @@ export const useCharacter = ({ user, isAdmin }) => {
         feat_granted: sourceType === 'feat',
         feature_granted: sourceType === 'feature',
         item_granted: sourceType === 'item',
-        feat_uses: explicitUses,
+        feat_uses: grant.requires_spell_slot ? undefined : explicitUses,
+        requires_spell_slot: grant.requires_spell_slot === true,
         feat_source: grant.source,
         spell
       });
@@ -439,16 +471,17 @@ export const useCharacter = ({ user, isAdmin }) => {
 
       setRelatedLoading(true);
       try {
+        const relatedStartedAt = performance.now();
         const [skillsRes, spellsRows, inventoryRows, featuresRes, featsRes, sensesRes] = await Promise.all([
-          supabase.from('character_skills').select('*').eq('character_id', selectedCharacterId),
-          fetchCharacterSpellsWithFallback(selectedCharacterId),
-          fetchInventoryWithMagicEquipment(selectedCharacterId),
-          supabase.from('character_features').select('*').eq('character_id', selectedCharacterId),
-          supabase
+          timedSupabaseOperation('character_skills', () => supabase.from('character_skills').select('*').eq('character_id', selectedCharacterId)),
+          timedSupabaseOperation('character_spells + fallback', () => fetchCharacterSpellsWithFallback(selectedCharacterId)),
+          timedSupabaseOperation('character_inventory + equipment', () => fetchInventoryWithMagicEquipment(selectedCharacterId)),
+          timedSupabaseOperation('character_features', () => supabase.from('character_features').select('*').eq('character_id', selectedCharacterId)),
+          timedSupabaseOperation('character_feats', () => supabase
             .from('character_feats')
             .select('*, feat:feats(*)')
-            .eq('character_id', selectedCharacterId),
-          supabase.from('character_senses').select('*').eq('character_id', selectedCharacterId)
+            .eq('character_id', selectedCharacterId)),
+          timedSupabaseOperation('character_senses', () => supabase.from('character_senses').select('*').eq('character_id', selectedCharacterId))
           // character_class_specific commented out - RLS policy causes 406 errors, re-enable when needed
           // supabase.from('character_class_specific').select('*').eq('character_id', selectedCharacterId).single()
         ]);
@@ -484,6 +517,10 @@ export const useCharacter = ({ user, isAdmin }) => {
           inventoryRows || [],
           selectedCharacterId
         );
+
+        if (isSupabaseTimingEnabled()) {
+          console.info(`[supabase timing] related character data total: ${Math.round(performance.now() - relatedStartedAt)}ms`);
+        }
 
         const related = {
           skills: skillsRes.data || [],

@@ -16,13 +16,13 @@ export default function AssetLoader({ children, mode = 'critical', showLoading =
     return getTextureAssets();
   }, [mode]);
 
-  const { loading: assetsLoading } = useAssetPreloader(assetPaths, {
+  useAssetPreloader(assetPaths, {
     parallel: true,
     timeout: 8000,
   });
 
-  // Show loading screen if assets are loading OR if child component wants to show loading
-  const loading = assetsLoading || showLoading;
+  // Preload assets without blocking the application shell.
+  const loading = showLoading;
 
   if (loading) {
     return (
