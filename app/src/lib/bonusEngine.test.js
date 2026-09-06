@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { collectBonuses, deriveCharacterStats } from '../lib/bonusEngine';
 
 describe('bonusEngine', () => {
@@ -84,6 +84,66 @@ describe('bonusEngine', () => {
       });
     });
 
+    it('should extend skill_bonus "all" to initiative', () => {
+      const features = [
+        {
+          id: 'feat-lucky',
+          name: 'Stone of Good Luck',
+          benefits: [{ type: 'skill_bonus', amount: 1, skills: ['all'] }]
+        }
+      ];
+
+      const bonuses = collectBonuses({ items: [], features, overrides: [] });
+
+      const initiativeBonus = bonuses.find((b) => b.target === 'initiative');
+      expect(initiativeBonus).toMatchObject({ target: 'initiative', value: 1 });
+      expect(bonuses.filter((b) => b.target.startsWith('skill.')).length).toBe(18);
+    });
+
+    it('should not extend named skill_bonus to initiative', () => {
+      const features = [
+        {
+          id: 'feat-focused',
+          name: 'Keen Mind',
+          benefits: [{ type: 'skill_bonus', amount: 2, skills: ['perception'] }]
+        }
+      ];
+
+      const bonuses = collectBonuses({ items: [], features, overrides: [] });
+
+      expect(bonuses.find((b) => b.target === 'initiative')).toBeUndefined();
+    });
+
+    it('should resolve ability references in ac_bonus', () => {
+      const features = [
+        {
+          id: 'feat-ac-1',
+          name: 'Blessed Warding',
+          benefits: [{ type: 'ac_bonus', value: 'charisma' }]
+        },
+        {
+          id: 'feat-ac-2',
+          name: 'Arcane Deflection',
+          benefits: [{ type: 'ac_bonus', bonus_source: 'charisma_modifier' }]
+        },
+        {
+          id: 'feat-ac-3',
+          name: 'Ring of Warding',
+          benefits: [{ type: 'ac_bonus', value: 2 }]
+        }
+      ];
+
+      const bonuses = collectBonuses({
+        items: [],
+        features,
+        baseCharacterData: { charisma: 18 },
+        overrides: []
+      });
+
+      const acBonuses = bonuses.filter((b) => b.target === 'ac');
+      expect(acBonuses.map((b) => b.value)).toEqual([4, 4, 2]);
+    });
+
     it('should collect initiative_bonus from single-object benefits shape', () => {
       const features = [
         {
@@ -105,6 +165,38 @@ describe('bonusEngine', () => {
         target: 'initiative',
         value: 4
       });
+    });
+
+    it('should not warn for known spell and weapon benefit aliases', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const features = [{
+        id: 'feat-known-aliases',
+        name: 'Known Alias Feature',
+        benefits: [
+          { type: 'spell_attack_bonus', amount: 2 },
+          { type: 'spellcasting_bonus', applies_to: 'dc', amount: 1 },
+          { type: 'weapon_attack_bonus', amount: 1 },
+          { type: 'weapon_damage_bonus', amount: 2 },
+          { type: 'pact_weapon' }
+        ]
+      }];
+
+      const bonuses = collectBonuses({
+        items: [],
+        features,
+        baseCharacterData: {},
+        overrides: []
+      });
+
+      expect(bonuses).toEqual(expect.arrayContaining([
+        expect.objectContaining({ target: 'spell_attack', value: 2 }),
+        expect.objectContaining({ target: 'spell_save_dc', value: 1 }),
+        expect.objectContaining({ target: 'melee_weapon_attack', value: 1 }),
+        expect.objectContaining({ target: 'melee_weapon_damage', value: 2 })
+      ]));
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('Unknown benefit type'));
+      warnSpy.mockRestore();
     });
 
     it('should collect ac_override with normalized mods and shield allowance', () => {
@@ -251,6 +343,58 @@ describe('bonusEngine', () => {
         expect.objectContaining({ target: 'spell.Fire Bolt' })
       ]));
     });
+
+    it('should collect Innate Sorcery spell DC and spell attack advantage benefits', () => {
+      const bonuses = collectBonuses({
+        items: [],
+        features: [{
+          name: 'Innate Sorcery',
+          benefits: [
+            { type: 'spell_save_dc_bonus', amount: 1, spell_lists: ['Sorcerer'] },
+            { type: 'spell_attack_advantage', spell_lists: ['Sorcerer'] }
+          ]
+        }],
+        baseCharacterData: {},
+        overrides: []
+      });
+
+      expect(bonuses).toEqual(expect.arrayContaining([
+        expect.objectContaining({ target: 'spell_save_dc', value: 1, spellLists: ['sorcerer'] }),
+        expect.objectContaining({ target: 'advantage.spell_attack', spellLists: ['sorcerer'] })
+      ]));
+    });
+
+    it('should resolve a speed benefit that references another movement type', () => {
+      const bonuses = collectBonuses({
+        items: [],
+        features: [{
+          name: 'Sprout Wings',
+          benefits: [{ type: 'speed', movement_type: 'fly', speed_value: 'walk' }]
+        }],
+        baseCharacterData: { speeds: { walk: 35 } },
+        overrides: []
+      });
+
+      expect(bonuses).toEqual([
+        expect.objectContaining({ target: 'speed.fly', value: 35 })
+      ]);
+    });
+
+    it('should still parse numeric speed values and movement type aliases', () => {
+      const bonuses = collectBonuses({
+        items: [],
+        features: [{
+          name: 'Longstrider',
+          benefits: [{ type: 'speed', movement_type: 'Walking', speed_value: '40ft' }]
+        }],
+        baseCharacterData: {},
+        overrides: []
+      });
+
+      expect(bonuses).toEqual([
+        expect.objectContaining({ target: 'speed.walk', value: 40 })
+      ]);
+    });
   });
 
   describe('deriveCharacterStats', () => {
@@ -375,6 +519,17 @@ describe('bonusEngine', () => {
       expect(derived.speeds.fly).toBe(30); // New speed added
     });
 
+    it('should merge speed bonuses into equivalent base speed keys', () => {
+      const bonuses = [{ target: 'speed.walk', value: 10, source: { label: 'Apex Predator' } }];
+
+      const { derived } = deriveCharacterStats({
+        base: { ...baseStats, speeds: { Walking: 30 } },
+        bonuses
+      });
+
+      expect(derived.speeds).toEqual({ walk: 40 });
+    });
+
     it('should track bonus sources', () => {
       const bonuses = [
         { target: 'ac', value: 2, source: { label: 'Shield' } },
@@ -477,10 +632,11 @@ describe('bonusEngine', () => {
 
       const bonuses = collectBonuses({ features: [feature] });
 
-      // Should have 18 bonuses (one for each skill)
-      expect(bonuses.length).toBe(18);
+      // 18 skill bonuses plus initiative (an ability check)
+      expect(bonuses.length).toBe(19);
       expect(bonuses.every(b => b.value === 1)).toBe(true);
-      expect(bonuses.every(b => b.target.startsWith('skill.'))).toBe(true);
+      expect(bonuses.filter(b => b.target.startsWith('skill.')).length).toBe(18);
+      expect(bonuses.find(b => b.target === 'initiative')).toBeDefined();
       
       // Verify some specific skills
       expect(bonuses.find(b => b.target === 'skill.perception')).toBeDefined();

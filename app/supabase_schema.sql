@@ -257,6 +257,7 @@ CREATE TABLE monster_statblocks (
   reactions JSONB DEFAULT '[]'::jsonb,
   legendary_actions_intro TEXT,
   legendary_actions JSONB DEFAULT '[]'::jsonb,
+  forms JSONB NOT NULL DEFAULT '[]'::jsonb,
 
   source_text TEXT NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),

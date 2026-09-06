@@ -31,7 +31,17 @@ const emptyAbilityMap = () => abilityOrder.reduce((acc, key) => ({ ...acc, [key]
 
 const emptySourceMap = () => abilityOrder.reduce((acc, key) => ({ ...acc, [key]: [] }), {});
 
-const normalizeSpeedType = (value) => (value || '').toLowerCase();
+const normalizeSpeedType = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  const aliases = {
+    walking: 'walk',
+    flying: 'fly',
+    climbing: 'climb',
+    swimming: 'swim',
+    burrowing: 'burrow'
+  };
+  return aliases[normalized] || normalized;
+};
 
 const normalizeTagValue = (value) => String(value || '')
   .trim()
@@ -258,12 +268,24 @@ const benefitHandlers = {
       ? allSkills
       : benefit.skills;
 
-    return skillsToBonus.map(skill => ({
+    const bonuses = skillsToBonus.map(skill => ({
       target: `skill.${skill}`,
       value: benefit.amount,
       type: benefit.bonus_type || 'untyped',
       source
     }));
+
+    // "all" covers every ability check, so initiative (a Dex check) is included
+    if (benefit.skills.includes('all')) {
+      bonuses.push({
+        target: 'initiative',
+        value: benefit.amount,
+        type: benefit.bonus_type || 'untyped',
+        source
+      });
+    }
+
+    return bonuses;
   },
 
   /**
@@ -378,14 +400,30 @@ const benefitHandlers = {
     return [];
   },
 
+  // Metadata-only benefit consumed by CharacterSheet's check, save, and attack displays.
+  d20_ability_override: () => {
+    return [];
+  },
+
   /**
-   * ac_bonus: Flat bonus to armor class
-   * Structure: { type: "ac_bonus", value: 2 }
+   * ac_bonus: Bonus to armor class, flat or modifier-based
+   * Structures:
+   *  - { type: "ac_bonus", value: 2 }
+   *  - { type: "ac_bonus", bonus_source: "charisma_modifier" }
    */
   ac_bonus: (benefit, baseCharacterData = {}, source) => {
     // Support both 'value' and 'amount' property names
-    const bonusValue = benefit.value !== undefined ? benefit.value : benefit.amount;
-    if (typeof bonusValue !== 'number') return [];
+    let bonusValue = benefit.value !== undefined ? benefit.value : benefit.amount;
+
+    if (typeof bonusValue !== 'number') {
+      // Modifier reference: bonus_source, or a string value like "charisma"/"charisma_modifier"
+      const reference = benefit.bonus_source || (typeof bonusValue === 'string' ? bonusValue : null);
+      if (!reference) return [];
+      const normalized = /_modifier(_\w+)?$|^proficiency_bonus$/.test(reference) ? reference : `${reference}_modifier`;
+      bonusValue = resolveModifierValue(normalized, baseCharacterData);
+    }
+
+    if (typeof bonusValue !== 'number' || bonusValue === 0) return [];
     return [{
       target: 'ac',
       value: bonusValue,
@@ -526,16 +564,23 @@ const benefitHandlers = {
   /**
    * speed: Grants a movement speed
    * Structure: { type: "speed", speed_value: "30ft", movement_type: "Walking" }
-   * Parses speed_value and normalizes movement_type to create speed bonuses
+   * speed_value may also reference another movement type, e.g. "walk".
    */
   speed: (benefit, baseCharacterData = {}, source) => {
     if (!benefit.speed_value || !benefit.movement_type) return [];
-    
-    // Parse speed value (e.g., "30ft" -> 30)
-    const speedMatch = benefit.speed_value.match(/\d+/);
-    if (!speedMatch) return [];
-    const value = parseInt(speedMatch[0], 10);
-    
+
+    const rawSpeedValue = String(benefit.speed_value);
+    const speedMatch = rawSpeedValue.match(/\d+/);
+
+    let value;
+    if (speedMatch) {
+      value = parseInt(speedMatch[0], 10);
+    } else {
+      const referencedType = normalizeSpeedType(rawSpeedValue);
+      value = Number(baseCharacterData?.speeds?.[referencedType]);
+      if (!Number.isFinite(value)) return [];
+    }
+
     // Normalize movement type (e.g., "Walking" -> "walk")
     const movementType = normalizeSpeedType(benefit.movement_type);
     if (!movementType) return [];
@@ -679,6 +724,64 @@ const benefitHandlers = {
       };
     });
   },
+
+  spell_save_dc_bonus: (benefit, baseCharacterData = {}, source) => {
+    const value = Number(benefit.amount ?? benefit.value ?? benefit.bonus);
+    if (!Number.isFinite(value) || value === 0) return [];
+    return [{
+      target: 'spell_save_dc',
+      value,
+      type: benefit.bonus_type || 'untyped',
+      source,
+      spellLists: toNormalizedStringList(benefit.spell_lists, benefit.spellLists)
+    }];
+  },
+
+  // Common aliases used by imported character data and schema examples.
+  spell_dc_bonus: (benefit, baseCharacterData = {}, source) => {
+    return benefitHandlers.spell_save_dc_bonus(benefit, baseCharacterData, source);
+  },
+
+  spell_attack_bonus: (benefit, baseCharacterData = {}, source) => {
+    const value = Number(benefit.amount ?? benefit.value ?? benefit.bonus ?? 0);
+    if (!Number.isFinite(value) || value === 0) return [];
+    return [{
+      target: 'spell_attack',
+      value,
+      type: benefit.bonus_type || 'untyped',
+      source,
+      spellLists: toNormalizedStringList(benefit.spell_lists, benefit.spellLists)
+    }];
+  },
+
+  spellcasting_bonus: (benefit, baseCharacterData = {}, source) => {
+    const appliesTo = normalizeBenefitType(benefit?.applies_to || benefit?.appliesTo || 'attack_and_dc');
+
+    if (['attack', 'to_hit', 'spell_attack', 'spell_attack_bonus'].includes(appliesTo)) {
+      return benefitHandlers.spell_attack_bonus(benefit, baseCharacterData, source);
+    }
+
+    if (['dc', 'save_dc', 'spell_dc', 'spell_save_dc', 'spell_save_dc_bonus'].includes(appliesTo)) {
+      return benefitHandlers.spell_save_dc_bonus(benefit, baseCharacterData, source);
+    }
+
+    return [
+      ...benefitHandlers.spell_attack_bonus(benefit, baseCharacterData, source),
+      ...benefitHandlers.spell_save_dc_bonus(benefit, baseCharacterData, source)
+    ];
+  },
+
+  spell_bonus: (benefit, baseCharacterData = {}, source) => {
+    return benefitHandlers.spellcasting_bonus(benefit, baseCharacterData, source);
+  },
+
+  spell_attack_advantage: (benefit, baseCharacterData = {}, source) => [{
+    target: 'advantage.spell_attack',
+    value: 1,
+    type: 'advantage',
+    source,
+    spellLists: toNormalizedStringList(benefit.spell_lists, benefit.spellLists)
+  }],
 
   /**
    * speed_bonus: Adds or subtracts from movement speed
@@ -948,12 +1051,27 @@ const benefitHandlers = {
     }];
   },
 
+  // Legacy/alias names used by imported content and magic item schemas.
+  weapon_attack_bonus: (benefit, baseCharacterData = {}, source) => {
+    return benefitHandlers.melee_weapon_attack_bonus(benefit, baseCharacterData, source);
+  },
+
+  weapon_damage_bonus: (benefit, baseCharacterData = {}, source) => {
+    return benefitHandlers.melee_weapon_damage_bonus(benefit, baseCharacterData, source);
+  },
+
   /**
    * weapon_attack_ability: Metadata-only benefit consumed by combat UI.
    * Example: { type: "weapon_attack_ability", ability_mod: "finesse" }
    * No direct numeric bonus is emitted by the bonus engine.
    */
   weapon_attack_ability: () => {
+    return [];
+  },
+
+  // pact_weapon: Metadata-only benefit consumed by combat UI. It enables a
+  // per-weapon Pact checkbox that uses Charisma for attack and damage.
+  pact_weapon: () => {
     return [];
   },
 
@@ -1075,13 +1193,15 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     speeds: {},
     senses: {},
     spells: {},
+    spellSaveDC: 0,
     damageResistances: {},
     damageImmunities: {},
     conditionResistances: {},
     conditionImmunities: {},
     advantages: {
       skills: {},
-      saves: {}
+      saves: {},
+      spellAttacks: []
     }
   };
 
@@ -1097,13 +1217,15 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     speeds: {},
     senses: {},
     spells: {},
+    spellSaveDC: [],
     damageResistances: {},
     damageImmunities: {},
     conditionResistances: {},
     conditionImmunities: {},
     advantages: {
       skills: {},
-      saves: {}
+      saves: {},
+      spellAttacks: []
     }
   };
 
@@ -1124,6 +1246,18 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
       if (!sources.advantages.saves[save]) sources.advantages.saves[save] = [];
       sources.advantages.saves[save].push(bonus);
       totals.advantages.saves[save] = true;
+      return;
+    }
+
+    if (bonus.target === 'advantage.spell_attack') {
+      totals.advantages.spellAttacks.push(bonus.spellLists || []);
+      sources.advantages.spellAttacks.push(bonus);
+      return;
+    }
+
+    if (bonus.target === 'spell_save_dc') {
+      totals.spellSaveDC += bonus.value;
+      sources.spellSaveDC.push(bonus);
       return;
     }
 
@@ -1303,7 +1437,14 @@ export const deriveCharacterStats = ({ base, bonuses = [] }) => {
     ? base.speeds
     : {};
 
-  const derivedSpeeds = { ...baseSpeeds };
+  // Normalize base keys so stored variants ("Walking") merge with bonus targets ("walk").
+  const derivedSpeeds = Object.entries(baseSpeeds).reduce((acc, [type, value]) => {
+    const normalizedType = normalizeSpeedType(type);
+    if (!normalizedType) return acc;
+    acc[normalizedType] = (acc[normalizedType] || 0) + (Number(value) || 0);
+    return acc;
+  }, {});
+
   Object.keys(totals.speeds).forEach((type) => {
     derivedSpeeds[type] = (derivedSpeeds[type] || 0) + totals.speeds[type];
   });

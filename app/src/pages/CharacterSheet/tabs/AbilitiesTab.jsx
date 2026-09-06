@@ -1,6 +1,6 @@
 import { buildSkillComputationContext, calculateSkillBonus } from '../utils/skillMath';
 
-export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod, wisMod, chaMod, proficiencyBonus, skills, derivedStats, allBonuses, getAbilityBonuses, inspectorState, setInspectorState, baseAbilities, saveAdvantages = {}, statsTotals = {}, derivedMods = {}, features = [], skillAdvantages = {} }) {
+export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod, wisMod, chaMod, proficiencyBonus, skills, derivedStats, allBonuses, getAbilityBonuses, inspectorState, setInspectorState, baseAbilities, saveAdvantages = {}, statsTotals = {}, derivedMods = {}, features = [], skillAdvantages = {}, d20AbilityOverrides = [] }) {
   // Helper to get custom modifier total for an ability
   const getCustomModifierTotal = (abilityKey) => {
     const mods = inspectorState.abilityCustomModifiers?.[abilityKey] || [];
@@ -51,6 +51,17 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
     'Intelligence': 'intelligence',
     'Wisdom': 'wisdom',
     'Charisma': 'charisma'
+  };
+
+  const getSaveModifier = (ability) => {
+    const override = d20AbilityOverrides.find((benefit) => (
+      Array.isArray(benefit?.source_abilities)
+      && benefit.source_abilities.includes(ability.key)
+      && Array.isArray(benefit?.applies_to)
+      && benefit.applies_to.includes('saving_throws')
+      && Number.isFinite(derivedMods?.[benefit?.replacement_ability])
+    ));
+    return override ? derivedMods[override.replacement_ability] : ability.mod;
   };
 
   const handleAbilityClick = (ability) => {
@@ -113,8 +124,15 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
   const hasDefensiveTraits = damageResistances.length > 0 || damageImmunities.length > 0 || conditionResistances.length > 0 || conditionImmunities.length > 0;
 
   const formatTraitLabel = (value) => String(value || '')
+    .trim()
     .replace(/_/g, ' ')
-    .replace(/(^.|\s.)/g, (m) => m.toUpperCase());
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((segment) => segment
+      .split('-')
+      .map((part) => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : '')
+      .join('-'))
+    .join(' ');
 
   return (
     <div className="abilities-tab">
@@ -158,7 +176,7 @@ export default function AbilitiesTab({ character, strMod, dexMod, conMod, intMod
             abilities[2],
             abilities[5]
           ].map((ability) => {
-            const baseSaveBonus = ability.mod + (ability.save ? proficiencyBonus : 0);
+            const baseSaveBonus = getSaveModifier(ability) + (ability.save ? proficiencyBonus : 0);
             const flatSaveBonus = statsTotals.saves?.[ability.key] || 0;
             const saveBonus = baseSaveBonus + flatSaveBonus;
             const hasAdvantage = !!saveAdvantages[ability.key];

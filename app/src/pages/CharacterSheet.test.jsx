@@ -164,6 +164,187 @@ describe('CharacterSheet', () => {
       expect(portrait).toBeInTheDocument();
       expect(portrait).toHaveAttribute('src', '/test-portrait.jpg');
     });
+
+    it('should parse arithmetic max uses expressions such as proficiency+level', () => {
+      useCharacter.mockReturnValue({
+        character: {
+          ...mockCharacter,
+          level: 5,
+          features: [
+            {
+              ...mockFeatures[0],
+              source: { source: 'class', level: 5 },
+              max_uses: 'proficiency+level',
+              current_uses: 0,
+              reset_on: 'short rest'
+            }
+          ]
+        },
+        loading: false,
+        relatedLoading: false,
+        error: null,
+        characters: null,
+        selectedCharacterId: mockCharacter.id,
+        setSelectedCharacterId: vi.fn()
+      });
+
+      renderCharacterSheet();
+      expect(document.querySelector('.uses-max')?.textContent).toBe('8');
+    });
+
+    it('should interpolate arithmetic description expressions such as ${proficiency+level}', () => {
+      const description = 'You can use this feature ${proficiency+level} times.';
+      const feature = {
+        id: 'arith-desc-feature',
+        name: 'Arithmetic Feature',
+        source: { source: 'class', level: 5 },
+        description,
+        max_uses: 0,
+        reset_on: 'long rest'
+      };
+
+      useCharacter.mockReturnValue({
+        character: {
+          ...mockCharacter,
+          level: 5,
+          features: [feature]
+        },
+        loading: false,
+        relatedLoading: false,
+        error: null,
+        characters: null,
+        selectedCharacterId: mockCharacter.id,
+        setSelectedCharacterId: vi.fn()
+      });
+
+      renderCharacterSheet();
+      expect(screen.getByText(/You can use this feature 8 times\./i)).toBeInTheDocument();
+    });
+
+    it('should render Metamagic features like invocation and fighting-style features', async () => {
+      useCharacter.mockReturnValue({
+        character: {
+          ...mockCharacter,
+          features: [{
+            id: 'quickened-spell',
+            name: 'Quickened Spell',
+            source: { source: 'metamagic', level: 3 },
+            description: 'When you cast a spell, you can change its casting time.'
+          }]
+        },
+        loading: false,
+        relatedLoading: false,
+        error: null,
+        characters: null,
+        selectedCharacterId: mockCharacter.id,
+        setSelectedCharacterId: vi.fn()
+      });
+
+      renderCharacterSheet();
+      fireEvent.click(screen.getByLabelText('Features'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Metamagic')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Quickened Spell')).toBeInTheDocument();
+      expect(screen.getByText(/When you cast a spell/i)).toBeInTheDocument();
+    });
+
+    it('should allow two selections for a multi-select feature', async () => {
+      useCharacter.mockReturnValue({
+        character: {
+          ...mockCharacter,
+          features: [{
+            id: 'monster-magic',
+            name: 'Monster Magic',
+            source: { source: 'metamagic', level: 7 },
+            description: '**Channeled Flight**\n\n**Draining Ray**\n\n**Bestial Venom**\n\n**Cold Blood**',
+            benefits: [{
+              type: 'select',
+              select: {
+                max_selections: 2,
+                choices: ['Channeled Flight', 'Draining Ray', 'Bestial Venom', 'Cold Blood'],
+                'Channeled Flight': [],
+                'Draining Ray': [],
+                'Bestial Venom': [],
+                'Cold Blood': []
+              }
+            }]
+          }]
+        },
+        loading: false,
+        relatedLoading: false,
+        error: null,
+        characters: null,
+        selectedCharacterId: mockCharacter.id,
+        setSelectedCharacterId: vi.fn()
+      });
+
+      renderCharacterSheet();
+      fireEvent.click(screen.getByLabelText('Features'));
+
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Select Channeled Flight' })).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Channeled Flight' }));
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Select Channeled Flight' })).toBeChecked());
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Draining Ray' }));
+      await waitFor(() => {
+        expect(screen.getByRole('checkbox', { name: 'Select Channeled Flight' })).toBeChecked();
+        expect(screen.getByRole('checkbox', { name: 'Select Draining Ray' })).toBeChecked();
+        expect(screen.getByRole('checkbox', { name: 'Select Bestial Venom' })).toBeDisabled();
+      });
+
+      expect(screen.getByRole('checkbox', { name: 'Select Bestial Venom' })).toBeDisabled();
+    });
+
+    it('should apply an active d20 ability override to matching ability checks', async () => {
+      useCharacter.mockReturnValue({
+        character: {
+          ...mockCharacter,
+          features: [{
+            id: 'monster-unleashed',
+            name: 'Monster Unleashed',
+            source: { source: 'metamagic', level: 14 },
+            benefits: [{
+              type: 'stance',
+              stances: [{
+                name: 'Apex Predator',
+                benefits: [{
+                  type: 'd20_ability_override',
+                  source_abilities: ['strength'],
+                  replacement_ability: 'charisma',
+                  applies_to: ['checks', 'saving_throws', 'attack_rolls']
+                }]
+              }]
+            }]
+          }]
+        },
+        loading: false,
+        relatedLoading: false,
+        error: null,
+        characters: null,
+        selectedCharacterId: mockCharacter.id,
+        setSelectedCharacterId: vi.fn()
+      });
+
+      renderCharacterSheet();
+      fireEvent.click(screen.getByLabelText('Features'));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Apex Predator' })).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: 'Apex Predator' }));
+      fireEvent.click(screen.getByLabelText('Skills'));
+
+      await waitFor(() => {
+        const athletics = Array.from(document.querySelectorAll('.skill-item'))
+          .find((row) => row.textContent.includes('Athletics'));
+        expect(athletics?.querySelector('.skill-bonus')).toHaveTextContent('-1');
+      });
+
+      fireEvent.click(screen.getByLabelText('Actions'));
+      await waitFor(() => {
+        const unarmedNameRow = screen.getByText('Unarmed Strike').closest('.action-row');
+        expect(unarmedNameRow?.nextElementSibling?.querySelector('.hit-col .stat-value')).toHaveTextContent('+2');
+      });
+    });
   });
 
   describe('Admin Features', () => {

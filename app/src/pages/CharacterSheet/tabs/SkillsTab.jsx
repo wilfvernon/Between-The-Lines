@@ -1,6 +1,6 @@
 import { buildSkillComputationContext, calculateSkillBonus } from '../utils/skillMath';
 
-export default function SkillsTab({ character, proficiencyBonus, skills: characterSkills, loading, features, derivedMods, skillAdvantages = {}, statsTotals = {} }) {
+export default function SkillsTab({ character, proficiencyBonus, skills: characterSkills, loading, features, derivedMods, skillAdvantages = {}, statsTotals = {}, d20AbilityOverrides = [] }) {
   /**
    * Skill Proficiency Levels
    * 
@@ -54,6 +54,15 @@ export default function SkillsTab({ character, proficiencyBonus, skills: charact
   
   // Use passed-in derivedMods which includes ALL bonuses
   const getAbilityMod = (abilityKey) => {
+    const override = d20AbilityOverrides.find((benefit) => (
+      Array.isArray(benefit?.source_abilities)
+      && benefit.source_abilities.includes(abilityKey)
+      && Array.isArray(benefit?.applies_to)
+      && benefit.applies_to.includes('checks')
+      && Number.isFinite(derivedMods?.[benefit?.replacement_ability])
+    ));
+    if (override) return derivedMods[override.replacement_ability];
+
     // ALWAYS use passed-in derivedMods - they're calculated with all bonuses applied
     return derivedMods?.[abilityKey] ?? abilityModifier(character[abilityKey]);
   };

@@ -385,7 +385,7 @@ export const useCharacter = ({ user, isAdmin }) => {
     const uniqueNames = [...new Set(granted.map((entry) => entry.name).filter(Boolean))];
     if (!uniqueNames.length) return baseSpells;
 
-    const { data: spellRows, error } = await supabase
+    const { data: exactSpellRows, error } = await supabase
       .from('spells')
       .select('*')
       .in('name', uniqueNames);
@@ -395,11 +395,27 @@ export const useCharacter = ({ user, isAdmin }) => {
       return baseSpells;
     }
 
-    const spellByName = new Map((spellRows || []).map((spell) => [spell.name, spell]));
+    const exactSpellNames = new Set((exactSpellRows || []).map((spell) => spell.name));
+    const unresolvedNames = uniqueNames.filter((name) => !exactSpellNames.has(name));
+    const fallbackResults = await Promise.all(unresolvedNames.map(async (name) => {
+      const { data, error: fallbackError } = await supabase
+        .from('spells')
+        .select('*')
+        .ilike('name', name.trim());
+
+      if (fallbackError) {
+        console.warn(`Failed case-insensitive spell lookup for "${name}":`, fallbackError.message);
+      }
+
+      return data?.[0] || null;
+    }));
+
+    const spellRows = [...(exactSpellRows || []), ...fallbackResults.filter(Boolean)];
+    const spellByName = new Map(spellRows.map((spell) => [String(spell.name || '').trim().toLowerCase(), spell]));
     const merged = [...baseSpells];
 
     granted.forEach((grant) => {
-      const spell = spellByName.get(grant.name);
+      const spell = spellByName.get(String(grant.name || '').trim().toLowerCase());
       if (!spell) return;
 
       const existingIndex = merged.findIndex((entry) => {

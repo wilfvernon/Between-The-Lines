@@ -500,8 +500,12 @@ export default function SpellsTab({ character, spells, loading, proficiencyBonus
   const spellAbility = abilityMap[rawAbility] || 'intelligence';
   const spellAbilityMod = derivedMods?.[spellAbility] || 0;
   const spellcastingItemBonuses = getMagicItemSpellcastingBonuses(character);
+  const hasSorcererClass = (character.classes || []).some((entry) => (
+    String(entry?.definition?.name || entry?.class || '').toLowerCase() === 'sorcerer'
+  ));
+  const featureSpellSaveDCBonus = hasSorcererClass ? (statsTotals?.spellSaveDC || 0) : 0;
   const spellAttackBonus = spellAbilityMod + (proficiencyBonus || 0) + (spellcastingItemBonuses.attackBonus || 0);
-  const spellSaveDC = 8 + (proficiencyBonus || 0) + spellAbilityMod + (spellcastingItemBonuses.saveDCBonus || 0);
+  const spellSaveDC = 8 + (proficiencyBonus || 0) + spellAbilityMod + (spellcastingItemBonuses.saveDCBonus || 0) + featureSpellSaveDCBonus;
 
   // Check if character can prepare spells
   const canPrepareSpells = () => {

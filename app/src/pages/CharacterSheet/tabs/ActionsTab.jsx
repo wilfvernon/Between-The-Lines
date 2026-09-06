@@ -868,17 +868,23 @@ function resolveWeaponAttackAbility({
   return 'strength';
 }
 
-function getFeatureWeaponAbilityOptions(character) {
+function getAutomaticWeaponAbilityOverride(character) {
   return (character?.features || []).flatMap((feature) => {
     const benefits = normalizeBenefits(feature?.benefits ?? feature?.benefit);
     return benefits
       .filter((benefit) => normalizeBenefitType(benefit?.type) === 'weapon_attack_ability')
       .map((benefit) => ({
-        ability: normalizeAbilityOverride(benefit?.ability_mod ?? benefit?.ability_modifier ?? benefit?.ability),
-        label: benefit?.label || feature?.name || 'Feature'
+        ability: normalizeAbilityOverride(benefit?.ability_mod ?? benefit?.ability_modifier ?? benefit?.ability)
       }))
-      .filter((option) => option.ability);
-  });
+      .find((option) => option.ability);
+  }).find(Boolean)?.ability || null;
+}
+
+function hasPactWeaponBenefit(character) {
+  return (character?.features || []).some((feature) => (
+    normalizeBenefits(feature?.benefits ?? feature?.benefit)
+      .some((benefit) => normalizeBenefitType(benefit?.type) === 'pact_weapon')
+  ));
 }
 
 function isTruthyFlag(value) {
@@ -1284,7 +1290,8 @@ export default function ActionsTab({
   abilityModifiers = {},
   FeatureUsesTracker = null,
   spellUses = {},
-  onSpellUsesChange = () => {}
+  onSpellUsesChange = () => {},
+  d20AbilityOverrides = []
 }) {
   const [activeSubtab, setActiveSubtab] = useState('actions');
   const [selectedSpell, setSelectedSpell] = useState(null);
@@ -1294,6 +1301,17 @@ export default function ActionsTab({
   const [weaponAbilityToggles, setWeaponAbilityToggles] = useState({});
   const [limitGaugeDraftValues, setLimitGaugeDraftValues] = useState({});
   const characterLevel = useMemo(() => getCharacterLevel(character), [character]);
+
+  const getAttackRollModifier = (abilityUsed, defaultModifier) => {
+    const attackOverride = d20AbilityOverrides.find((benefit) => (
+      Array.isArray(benefit?.source_abilities)
+      && benefit.source_abilities.includes(abilityUsed)
+      && Array.isArray(benefit?.applies_to)
+      && benefit.applies_to.includes('attack_rolls')
+      && Number.isFinite(derivedMods?.[benefit?.replacement_ability])
+    ));
+    return attackOverride ? derivedMods[attackOverride.replacement_ability] : defaultModifier;
+  };
 
   const commitLimitGaugeDraftValue = useCallback((gaugeStateId, gaugeConfig, gaugeState, draftValue) => {
     const parsed = draftValue === '' ? 0 : Number.parseInt(draftValue, 10);
@@ -1464,16 +1482,18 @@ export default function ActionsTab({
         const isRanged = range > 5 || longRange;
 
         // Choose ability: supports magic item ability overrides (including finesse/spellcasting)
-        const featureAbilityOptions = getFeatureWeaponAbilityOptions(character);
-        const selectedFeatureAbility = featureAbilityOptions.find((option) => weaponAbilityToggles[item.id]);
-        const abilityUsed = selectedFeatureAbility
-          ? resolveWeaponAttackAbility({
+        const hasPactWeapon = hasPactWeaponBenefit(character);
+        const automaticAbilityOverride = getAutomaticWeaponAbilityOverride(character);
+        const abilityUsed = hasPactWeapon && weaponAbilityToggles[item.id]
+          ? 'charisma'
+          : automaticAbilityOverride
+            ? resolveWeaponAttackAbility({
             hasFinesse,
             isRanged,
             derivedMods,
-            attackAbilityOverride: selectedFeatureAbility.ability
+            attackAbilityOverride: automaticAbilityOverride
           })
-          : resolveWeaponAttackAbility({
+            : resolveWeaponAttackAbility({
           hasFinesse,
           isRanged,
           derivedMods,
@@ -1483,6 +1503,7 @@ export default function ActionsTab({
         const abilityMod = abilityUsed === 'spellcasting'
           ? getSpellcastingAbilityMod(character, derivedMods)
           : (derivedMods[abilityUsed] || 0);
+        const attackAbilityMod = getAttackRollModifier(abilityUsed, abilityMod);
         
         // Check weapon proficiency
         const isProficient = isWeaponProficient(weapon, character, propertyNames);
@@ -1495,8 +1516,8 @@ export default function ActionsTab({
         const meleeDamageOneHandBonus = getConditionalMeleeBonus('melee_weapon_damage', { properties: propertyNames, versatile: hasVersatile, isRanged }, 1);
         const meleeDamageTwoHandBonus = getConditionalMeleeBonus('melee_weapon_damage', { properties: propertyNames, versatile: hasVersatile, isRanged }, 2);
 
-        const toHit = abilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitOneHandBonus;
-        const toHitTwoHand = abilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitTwoHandBonus;
+        const toHit = attackAbilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitOneHandBonus;
+        const toHitTwoHand = attackAbilityMod + profBonus + magicWeaponModifiers.attackBonus + meleeToHitTwoHandBonus;
         const abilityDamageBonus = magicWeaponModifiers.ignoreDamageModifier ? 0 : abilityMod;
         const damageBonus = abilityDamageBonus + magicWeaponModifiers.damageBonus + meleeDamageOneHandBonus;
         const versatileDamageBonus = abilityDamageBonus + magicWeaponModifiers.damageBonus + meleeDamageTwoHandBonus;
@@ -1527,8 +1548,8 @@ export default function ActionsTab({
           damageBonus,
           versatileDamageBonus,
           abilityUsed,
-          featureAbilityOptions,
-          featureAbilityEnabled: Boolean(selectedFeatureAbility),
+          hasPactWeapon,
+          featureAbilityEnabled: Boolean(hasPactWeapon && weaponAbilityToggles[item.id]),
           range: isRanged || hasThrown ? `${range}${longRange ? `/${longRange}` : ''} ft` : `${range} ft`,
           properties: propertyNames,
           versatile: hasVersatile,
@@ -1541,20 +1562,21 @@ export default function ActionsTab({
           hasMastery
         };
       });
-  }, [character?.inventory, derivedMods, proficiencyBonus, character, unlockedMasteries, getConditionalMeleeBonus]);
+  }, [character?.inventory, derivedMods, proficiencyBonus, character, unlockedMasteries, getConditionalMeleeBonus, weaponAbilityToggles, d20AbilityOverrides]);
 
   // Unarmed strike (always available)
   const unarmedStrike = useMemo(() => {
     if (!derivedMods) return null;
     
     const strMod = derivedMods.strength || 0;
+    const attackMod = getAttackRollModifier('strength', strMod);
     
     return {
       id: 'unarmed',
       name: 'Unarmed Strike',
       damage: '1',
       damageType: 'bludgeoning',
-      toHit: strMod + (proficiencyBonus || 0),
+      toHit: attackMod + (proficiencyBonus || 0),
       damageBonus: strMod,
       abilityUsed: 'strength',
       range: '5 ft',
@@ -1563,7 +1585,7 @@ export default function ActionsTab({
       isRanged: false,
       inventoryItem: null
     };
-  }, [derivedMods, proficiencyBonus]);
+  }, [derivedMods, proficiencyBonus, d20AbilityOverrides]);
 
   // Extract attacks from feature benefits
   const featureAttacks = useMemo(() => {
@@ -1590,6 +1612,7 @@ export default function ActionsTab({
         };
         const abilityUsed = abilityMap[abilityRaw] || 'strength';
         const abilityMod = derivedMods[abilityUsed] || 0;
+        const attackAbilityMod = getAttackRollModifier(abilityUsed, abilityMod);
         
         // Parse proficiency
         const addProficiency = benefit.add_proficiency === true || benefit.add_proficiency === 'true';
@@ -1607,7 +1630,7 @@ export default function ActionsTab({
         const range = benefit.range || (isRanged ? '30 ft' : '5 ft');
         
         // Calculate to-hit and damage
-        const toHit = abilityMod + profBonus;
+        const toHit = attackAbilityMod + profBonus;
         const damageBonus = abilityMod;
         
         // Get name from benefit or use attack type
@@ -1656,6 +1679,7 @@ export default function ActionsTab({
         };
         const abilityUsed = abilityMap[abilityRaw] || 'strength';
         const abilityMod = derivedMods[abilityUsed] || 0;
+        const attackAbilityMod = getAttackRollModifier(abilityUsed, abilityMod);
         
         // Parse proficiency
         const addProficiency = benefit.add_proficiency === true || benefit.add_proficiency === 'true';
@@ -1673,7 +1697,7 @@ export default function ActionsTab({
         const range = benefit.range || (isRanged ? '30 ft' : '5 ft');
         
         // Calculate to-hit and damage
-        const toHit = abilityMod + profBonus;
+        const toHit = attackAbilityMod + profBonus;
         const damageBonus = abilityMod;
         
         // Get name from benefit or use item name
@@ -1698,7 +1722,7 @@ export default function ActionsTab({
     });
     
     return attacks;
-  }, [character?.features, character?.inventory, derivedMods, proficiencyBonus, weaponAbilityToggles]);
+  }, [character?.features, character?.inventory, derivedMods, proficiencyBonus, weaponAbilityToggles, d20AbilityOverrides]);
 
   const allAttacks = weaponAttacks.concat(featureAttacks).concat(unarmedStrike ? [unarmedStrike] : []);
 
@@ -2380,20 +2404,26 @@ export default function ActionsTab({
                       <div key={`${attack.id}-name`} className="action-row action-name-row" >
                         <div className="action-name">
                           <h4>{attack.name}</h4>
-                          {attack.featureAbilityOptions?.length > 0 && (
-                            <button
-                              type="button"
-                              className={`attack-ability-toggle${attack.featureAbilityEnabled ? ' active' : ''}`}
-                              aria-pressed={attack.featureAbilityEnabled}
-                              onClick={() => setWeaponAbilityToggles((previous) => (
-                                previous[attack.inventoryItem.id]
-                                  ? {}
-                                  : { [attack.inventoryItem.id]: true }
-                              ))}
-                              title={`Use ${attack.featureAbilityOptions[0].ability} for this attack`}
-                            >
-                              {attack.featureAbilityEnabled ? 'CHA' : 'STR/DEX'}
-                            </button>
+                          {attack.hasPactWeapon && (
+                            <label className="pact-weapon-control" title="Use Charisma for this pact weapon">
+                              <input
+                                type="checkbox"
+                                checked={attack.featureAbilityEnabled}
+                                onChange={(event) => {
+                                  event.stopPropagation();
+                                  setWeaponAbilityToggles((prev) => {
+                                    const next = Object.fromEntries(
+                                      Object.keys(prev).map((key) => [key, false])
+                                    );
+                                    if (event.target.checked) {
+                                      next[attack.inventoryItem.id] = true;
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              />
+                              Pact
+                            </label>
                           )}
                           {!attack.isProficient && <span className="not-proficient">Not Proficient</span>}
                           {attack.masteryName && (

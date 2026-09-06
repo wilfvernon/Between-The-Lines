@@ -39,7 +39,74 @@ import AbilitiesTab from './CharacterSheet/tabs/AbilitiesTab';
  * Exception: Only use base abilities when collecting/deriving stats in the first place
  */
 
-const parseFeatureDescription = (text) => renderSpellDescription(text);
+const parseFeatureDescription = (text, { feature, featureId, activeSelection, onSelectionChange } = {}) => {
+  const choices = getFeatureSelectChoices(feature);
+  const maxSelections = getFeatureSelectMaxSelections(feature);
+  const activeSelections = Array.isArray(activeSelection)
+    ? activeSelection
+    : activeSelection
+      ? [activeSelection]
+      : [];
+
+  if (!choices.length || !featureId || !onSelectionChange) return renderSpellDescription(text);
+
+  const handleChoiceChange = (choiceName, checked) => {
+    onSelectionChange(featureId, (currentSelection) => {
+      const currentSelections = Array.isArray(currentSelection)
+        ? currentSelection
+        : currentSelection
+          ? [currentSelection]
+          : [];
+
+      if (maxSelections === 1) {
+        return checked ? choiceName : null;
+      }
+
+      return checked
+        ? currentSelections.length < maxSelections
+          ? [...currentSelections, choiceName]
+          : currentSelections
+        : currentSelections.filter((selection) => selection !== choiceName);
+    });
+  };
+
+  return (
+    <div className="rich-markdown">
+      <ReactMarkdown
+        remarkPlugins={[]}
+        components={{
+          strong: ({ children }) => {
+            const choiceName = String(children || '').trim();
+            const choice = choices.find((entry) => entry.name === choiceName);
+            if (!choice) return <em className="spell-special-text">{children}</em>;
+
+            const isChecked = activeSelections.includes(choiceName);
+            const isDisabled = !isChecked && activeSelections.length >= maxSelections;
+            return (
+              <label className="feature-inline-choice" title={`Select ${choiceName}`}>
+                <input
+                  type="checkbox"
+                  className={`use-box feature-inline-choice-checkbox ${isChecked ? 'used' : ''}`}
+                  checked={isChecked}
+                  disabled={isDisabled}
+                  onChange={(event) => {
+                    event.stopPropagation();
+                    handleChoiceChange(choiceName, event.target.checked);
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                  aria-label={`Select ${choiceName}`}
+                />
+                <em className="spell-special-text">{children}</em>
+              </label>
+            );
+          }
+        }}
+      >
+        {String(text || '').replace(/\r\n?/g, '\n')}
+      </ReactMarkdown>
+    </div>
+  );
+};
 
 // Helper to convert ability score improvements to bonus format
 
@@ -126,12 +193,13 @@ const FEATURE_DESCRIPTION_LIMIT = 240;
 const DEFAULT_FILTERS = ['Weapons', 'Armour', 'Magic', 'Gear', 'Trinkets'];
 
 const RARITY_ORDER = {
-  'legendary': 0,
-  'very rare': 1,
-  'rare': 2,
-  'uncommon': 3,
-  'common': 4,
-  'unknown': 5
+  'artifact': 0,
+  'legendary': 1,
+  'very rare': 2,
+  'rare': 3,
+  'uncommon': 4,
+  'common': 5,
+  'unknown': 6
 };
 
 /**
@@ -386,8 +454,8 @@ const sortItemsByRarityAndName = (items) => {
     const rarityA = (a.magic_item?.rarity || a.magic_item?.raw_data?.rarity || 'unknown').toLowerCase();
     const rarityB = (b.magic_item?.rarity || b.magic_item?.raw_data?.rarity || 'unknown').toLowerCase();
     
-    const orderA = RARITY_ORDER[rarityA] ?? 5;
-    const orderB = RARITY_ORDER[rarityB] ?? 5;
+    const orderA = RARITY_ORDER[rarityA] ?? 6;
+    const orderB = RARITY_ORDER[rarityB] ?? 6;
     
     // Sort by rarity first
     if (orderA !== orderB) {
@@ -502,12 +570,23 @@ const getFeatureSelectChoices = (feature) => {
   }));
 };
 
-const getSelectedFeatureBenefits = (feature, selectedChoice) => {
+const getFeatureSelectMaxSelections = (feature) => {
+  const selectBenefit = getSelectBenefit(feature);
+  const maxSelections = Number(selectBenefit?.select?.max_selections);
+  return Number.isFinite(maxSelections) && maxSelections > 1 ? Math.floor(maxSelections) : 1;
+};
+
+const getSelectedFeatureBenefits = (feature, selectedChoice, activeStance = null) => {
   if (!selectedChoice) return [];
 
   const selectChoices = getFeatureSelectChoices(feature);
-  const matchingChoice = selectChoices.find((choice) => choice.name === selectedChoice);
-  return matchingChoice?.benefits || [];
+  const selectedChoices = Array.isArray(selectedChoice) ? selectedChoice : [selectedChoice];
+  return selectedChoices.flatMap((choiceName) => {
+    const matchingChoice = selectChoices.find((choice) => choice.name === choiceName);
+    return (matchingChoice?.benefits || []).filter((benefit) => (
+      !benefit?.requires_stance || benefit.requires_stance === activeStance
+    ));
+  });
 };
 
 const evaluatePoolFormula = (formula, level, abilityModifiers = {}) => {
@@ -662,6 +741,73 @@ const interpolateFeatureText = (text, feature, characterLevel = 1, proficiencyBo
   let result = template;
   const level = Math.max(1, Number(characterLevel) || 1);
 
+  const resolveTemplateValue = (token) => {
+    const normalized = String(token || '').trim().toLowerCase();
+    if (!normalized) return null;
+
+    if (normalized === 'proficiency' || normalized === 'proficiency_bonus') {
+      return Number(proficiencyBonus) || 0;
+    }
+
+    if (normalized === 'level') {
+      return Number(level) || 0;
+    }
+
+    const abilityAliases = {
+      str: 'strength',
+      strength: 'strength',
+      dex: 'dexterity',
+      dexterity: 'dexterity',
+      con: 'constitution',
+      constitution: 'constitution',
+      int: 'intelligence',
+      intelligence: 'intelligence',
+      wis: 'wisdom',
+      wisdom: 'wisdom',
+      cha: 'charisma',
+      charisma: 'charisma'
+    };
+
+    const resolvedAbility = abilityAliases[normalized];
+    if (resolvedAbility) {
+      return Number.isFinite(abilityModifiers?.[resolvedAbility]) ? abilityModifiers[resolvedAbility] : 0;
+    }
+
+    const numeric = Number(normalized);
+    if (Number.isFinite(numeric)) return numeric;
+
+    return null;
+  };
+
+  const evaluateTemplateExpression = (expression) => {
+    const trimmed = String(expression || '').trim();
+    if (!trimmed) return null;
+
+    const roundingMatch = trimmed.match(/^(.*?)(?:\s*)(ru|rd)$/i);
+    const rounding = roundingMatch ? roundingMatch[2].toLowerCase() : null;
+    const baseExpression = roundingMatch ? roundingMatch[1].trim() : trimmed;
+
+    const sanitized = baseExpression.replace(/\b(proficiency_bonus|proficiency|level|strength|dexterity|constitution|intelligence|wisdom|charisma|str|dex|con|int|wis|cha)\b/gi, (token) => {
+      const resolved = resolveTemplateValue(token);
+      return Number.isFinite(resolved) ? String(resolved) : token;
+    });
+
+    if (!/^[\d+\-*/().\s]+$/.test(sanitized)) {
+      return null;
+    }
+
+    try {
+      const value = Function(`"use strict"; return (${sanitized})`)();
+      if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+
+      if (rounding === 'ru') return Math.ceil(value);
+      if (rounding === 'rd') return Math.floor(value);
+      return Math.floor(value);
+    } catch {
+      return null;
+    }
+  };
+
   const modifierMap = {
     strength: Number.isFinite(abilityModifiers?.strength) ? abilityModifiers.strength : 0,
     dexterity: Number.isFinite(abilityModifiers?.dexterity) ? abilityModifiers.dexterity : 0,
@@ -673,6 +819,20 @@ const interpolateFeatureText = (text, feature, characterLevel = 1, proficiencyBo
 
   result = result.replaceAll('${proficiency}', String(proficiencyBonus || 0));
   result = result.replaceAll('${level}', String(level));
+
+  result = result.replace(/\$\{([^}]+)\}/g, (match, expression) => {
+    const trimmedExpression = String(expression || '').trim();
+    if (!trimmedExpression) return match;
+
+    const simpleTag = trimmedExpression.toLowerCase();
+    if (['proficiency', 'level', 'proficiency_bonus'].includes(simpleTag)) {
+      return match;
+    }
+
+    const evaluated = evaluateTemplateExpression(trimmedExpression);
+    if (evaluated === null || evaluated === undefined) return match;
+    return String(evaluated);
+  });
 
   Object.entries(modifierMap).forEach(([ability, modifier]) => {
     result = result.replaceAll(`\${${ability}}`, String(modifier));
@@ -811,7 +971,7 @@ const getStanceBenefits = (feature, activeStance) => {
 const getActiveFeatureBenefits = (feature, featureState = {}) => {
   const benefits = normalizeBenefitsInput(feature?.benefits ?? feature?.benefit);
   const activeStanceBenefits = getStanceBenefits(feature, featureState.activeStance);
-  const selectedChoiceBenefits = getSelectedFeatureBenefits(feature, featureState.selectedChoice);
+  const selectedChoiceBenefits = getSelectedFeatureBenefits(feature, featureState.selectedChoice, featureState.activeStance);
 
   return [
     ...benefits,
@@ -835,7 +995,7 @@ const hasShieldIgnoreBenefit = (features = [], featureStates = {}) => {
   });
 };
 
-function FeatureDescriptionBlock({ featureId, description, expanded, onToggle }) {
+function FeatureDescriptionBlock({ feature, featureId, description, expanded, onToggle, activeSelection, onSelectionChange }) {
   if (!description) return null;
   const safeId = `feature-desc-${String(featureId).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   const isLong = description.length > FEATURE_DESCRIPTION_LIMIT;
@@ -844,7 +1004,7 @@ function FeatureDescriptionBlock({ featureId, description, expanded, onToggle })
   return (
     <div className={`feature-description-wrap ${isExpanded ? 'expanded' : 'collapsed'}`}>
       <div className="feature-description-body" id={safeId}>
-        {parseFeatureDescription(description)}
+        {parseFeatureDescription(description, { feature, featureId, activeSelection, onSelectionChange })}
       </div>
       {isLong && (
         <button
@@ -1344,7 +1504,9 @@ function CharacterSheet() {
   const handleFeatureSelectionChange = (featureId, choiceName) => {
     setActiveFeatureSelections((prev) => ({
       ...prev,
-      [featureId]: choiceName,
+      [featureId]: typeof choiceName === 'function'
+        ? choiceName(prev[featureId])
+        : choiceName,
     }));
   };
 
@@ -1564,7 +1726,7 @@ function CharacterSheet() {
       const activeStance = featureId ? activeStances[featureId] : null;
       const conditionalBenefits = [
         ...getStanceBenefits(feature, activeStance),
-        ...getSelectedFeatureBenefits(feature, selectedChoice)
+        ...getSelectedFeatureBenefits(feature, selectedChoice, activeStance)
       ];
 
       if (!conditionalBenefits.length) return [];
@@ -1577,13 +1739,26 @@ function CharacterSheet() {
           ...baseAbilities,
           level: Math.max(1, Number(character?.level) || 1),
           classes: Array.isArray(character?.classes) ? character.classes : [],
+          speeds: character?.speeds || {},
           proficiency: proficiencyBonus,
           shield_bonus: 0
         },
         overrides: []
       }) || [];
     });
-  }, [activeFeatureSelections, activeFeatureSelectionsLoaded, activeStances, activeStancesLoaded, baseAbilities, character?.classes, character?.level, featuresToProcess, proficiencyBonus]);
+  }, [activeFeatureSelections, activeFeatureSelectionsLoaded, activeStances, activeStancesLoaded, baseAbilities, character?.classes, character?.level, character?.speeds, featuresToProcess, proficiencyBonus]);
+
+  const activeD20AbilityOverrides = useMemo(() => {
+    if (!activeStancesLoaded || !activeFeatureSelectionsLoaded) return [];
+
+    return featuresToProcess.flatMap((feature) => {
+      const featureId = feature?.id;
+      return getActiveFeatureBenefits(feature, {
+        activeStance: featureId ? activeStances[featureId] : null,
+        selectedChoice: featureId ? activeFeatureSelections[featureId] : null,
+      }).filter((benefit) => normalizeBenefitType(benefit?.type) === 'd20_ability_override');
+    });
+  }, [activeFeatureSelections, activeFeatureSelectionsLoaded, activeStances, activeStancesLoaded, featuresToProcess]);
 
   // Show loading screen only while character data is loading
   // Textures load in background via TexturePreloader at app root
@@ -1898,6 +2073,7 @@ function CharacterSheet() {
       level: Math.max(1, Number(character?.level) || 1),
       classes: Array.isArray(character?.classes) ? character.classes : [],
       spells: character.spells || [],
+      speeds: character.speeds || {},
       proficiency: proficiencyBonus,
       shield_bonus: getEquippedShieldBonus(character.inventory, character, featuresToProcess, {
         activeSelections: activeFeatureSelections,
@@ -2389,6 +2565,7 @@ function CharacterSheet() {
               saveAdvantages={derivedStats?.advantages?.saves || {}}
               features={featuresToProcess}
               skillAdvantages={derivedStats?.advantages?.skills || {}}
+              d20AbilityOverrides={activeD20AbilityOverrides}
             />
           </div>
           <div className="tab-pane">
@@ -2401,6 +2578,7 @@ function CharacterSheet() {
               derivedMods={derivedMods}
               skillAdvantages={derivedStats?.advantages?.skills || {}}
               statsTotals={statsTotals}
+              d20AbilityOverrides={activeD20AbilityOverrides}
             />
           </div>
           <div className="tab-pane">
@@ -2421,6 +2599,7 @@ function CharacterSheet() {
               FeatureUsesTracker={FeatureUsesTracker}
               spellUses={spellUses}
               onSpellUsesChange={handleSpellUsesChange}
+              d20AbilityOverrides={activeD20AbilityOverrides}
             />
           </div>
           <div className="tab-pane">
@@ -3167,6 +3346,7 @@ function InventoryTab({ character, onInventoryUpdate, onSpellsUpdate, setSelecte
   const getRarityClass = (item) => {
     if (!item.magic_item) return '';
     const rarity = (item.magic_item.rarity || item.magic_item.raw_data?.rarity || '').toLowerCase();
+    if (rarity.includes('artifact')) return 'rarity-artifact';
     if (rarity.includes('uncommon')) return 'rarity-uncommon';
     if (rarity.includes('rare') && !rarity.includes('very')) return 'rarity-rare';
     if (rarity.includes('very rare')) return 'rarity-very-rare';
@@ -3244,7 +3424,12 @@ function InventoryTab({ character, onInventoryUpdate, onSpellsUpdate, setSelecte
                   <button className={item.equipped ? 'equip-box equipped' : 'equip-box'} onClick={(e) => { e.stopPropagation(); handleEquipToggle(item.id, item.equipped); }} title={item.equipped ? 'Unequip' : 'Equip'} />
                 )}
                 {requiresAttunement(item) && (
-                  <button className={item.attuned ? 'attune-box attuned' : 'attune-box'} onClick={(e) => { e.stopPropagation(); handleAttunementToggle(item.id, item.attuned); }} title={item.attuned ? 'Unattuned' : 'Attune'} />
+                  <button
+                    className={item.attuned ? 'attune-box attuned' : 'attune-box'}
+                    disabled={!item.attuned && attunementFull}
+                    onClick={(e) => { e.stopPropagation(); handleAttunementToggle(item.id, item.attuned); }}
+                    title={item.attuned ? 'Unattune' : attunementFull ? `Attunement limit reached (${ATTUNEMENT_LIMIT})` : 'Attune'}
+                  />
                 )}
               </div>
               <span className="item-qty">{item.quantity}</span>
@@ -3279,7 +3464,16 @@ function InventoryTab({ character, onInventoryUpdate, onSpellsUpdate, setSelecte
   };
 
   // Handle attunement toggle
+  const ATTUNEMENT_LIMIT = 3;
+  // Only count rows that actually require attunement; stale attuned flags on other items don't use a slot
+  const attunedCount = (character?.inventory || []).filter(
+    (entry) => entry?.attuned === true && magicItemRequiresAttunement(entry?.magic_item)
+  ).length;
+  const attunementFull = attunedCount >= ATTUNEMENT_LIMIT;
+
   const handleAttunementToggle = async (itemId, currentAttuned) => {
+    if (!currentAttuned && attunementFull) return;
+
     try {
       const { error } = await supabase
         .from('character_inventory')
@@ -4344,6 +4538,31 @@ const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, char
 
   const str = String(normalizedMaxUsesValue).toLowerCase().trim();
 
+  const evaluateArithmeticExpression = (expression, roundingMode = null) => {
+    const sanitized = String(expression || '').trim();
+    if (!sanitized) return 0;
+
+    const tokenExpression = sanitized.replace(/\b(proficiency_bonus|proficiency|level|strength|dexterity|constitution|intelligence|wisdom|charisma)\b/gi, (token) => {
+      const resolved = resolveBaseValue(token);
+      return Number.isFinite(resolved) ? String(resolved) : token;
+    });
+
+    if (!/^[\d+\-*/().\s]+$/.test(tokenExpression)) {
+      return 0;
+    }
+
+    try {
+      const result = Function(`"use strict"; return (${tokenExpression})`)();
+      if (typeof result !== 'number' || !Number.isFinite(result)) return 0;
+
+      if (roundingMode === 'ru') return Math.max(0, Math.ceil(result));
+      if (roundingMode === 'rd') return Math.max(0, Math.floor(result));
+      return Math.max(0, Math.floor(result));
+    } catch {
+      return 0;
+    }
+  };
+
   // Special scaling resources
   if (str === 'wildshape') {
     if (characterLevel <= 1) return 0;
@@ -4400,6 +4619,17 @@ const calculateMaxUses = (maxUsesValue, proficiencyBonus, abilityModifiers, char
     const divided = baseValue / divisor;
     const rounded = roundingMode.toLowerCase() === 'ru' ? Math.ceil(divided) : Math.floor(divided);
     return Math.max(0, rounded);
+  }
+
+  const arithmeticMatch = str.match(/^[a-z0-9_\s+\-*/().]+$/i);
+  if (arithmeticMatch) {
+    const roundingMatch = str.match(/^(.*?)(?:\s*)(ru|rd)$/i);
+    const roundingMode = roundingMatch ? roundingMatch[2].toLowerCase() : null;
+    const expression = roundingMatch ? roundingMatch[1].trim() : str;
+    const expressionValue = evaluateArithmeticExpression(expression, roundingMode);
+    if (expressionValue !== 0 || expression === '0' || expression === '0.0' || /^\s*0+(?:\.0+)?\s*$/.test(expression)) {
+      return expressionValue;
+    }
   }
 
   const directValue = resolveBaseValue(str);
@@ -4660,15 +4890,31 @@ function FeatureGaugeTracker({ gauge, featureId, storedState, onGaugeChange }) {
 }
 
 function FeatureSelectControl({ feature, featureId, activeSelection, onSelectionChange }) {
-  if (!feature || !featureId) return null;
+  return null;
 
   const choices = getFeatureSelectChoices(feature);
   if (!choices.length) return null;
+  const maxSelections = getFeatureSelectMaxSelections(feature);
+  const activeSelections = Array.isArray(activeSelection)
+    ? activeSelection
+    : activeSelection
+      ? [activeSelection]
+      : [];
 
   const handleChoiceClick = (event, choiceName) => {
     event.stopPropagation();
-    const nextChoice = activeSelection === choiceName ? null : choiceName;
-    onSelectionChange(featureId, nextChoice);
+    if (maxSelections === 1) {
+      onSelectionChange(featureId, activeSelections[0] === choiceName ? null : choiceName);
+      return;
+    }
+
+    const isActive = activeSelections.includes(choiceName);
+    const nextSelections = isActive
+      ? activeSelections.filter((selection) => selection !== choiceName)
+      : activeSelections.length < maxSelections
+        ? [...activeSelections, choiceName]
+        : activeSelections;
+    onSelectionChange(featureId, nextSelections);
   };
 
   return (
@@ -4676,7 +4922,7 @@ function FeatureSelectControl({ feature, featureId, activeSelection, onSelection
       <div className="feature-select-label">Choice:</div>
       <div className="feature-select-options">
         {choices.map((choice) => {
-          const isActive = activeSelection === choice.name;
+          const isActive = activeSelections.includes(choice.name);
           return (
             <button
               key={choice.name}
@@ -4880,6 +5126,7 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, ef
 
   let subclassFeatures = character.features?.filter(f => getSourceType(f) === 'subclass') || [];
   let invocationFeatures = character.features?.filter(f => getSourceType(f) === 'invocation') || [];
+  let metamagicFeatures = character.features?.filter(f => getSourceType(f) === 'metamagic') || [];
   let divinityFeatures = character.features?.filter(f => getSourceType(f) === 'divinity') || [];
   let fightingStyleFeatures = character.features?.filter(f => getSourceType(f) === 'fighting') || [];
   let classFeatures = character.features?.filter(f => getSourceType(f) === 'class') || [];
@@ -4887,11 +5134,12 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, ef
   // Sort by level
   subclassFeatures = [...subclassFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   invocationFeatures = [...invocationFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
+  metamagicFeatures = [...metamagicFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   divinityFeatures = [...divinityFeatures].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   fightingStyleFeatures = [...fightingStyleFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   classFeatures = [...classFeatures].sort((a, b) => (getSourceLevel(a) || 0) - (getSourceLevel(b) || 0));
   
-  if (subclassFeatures.length === 0 && invocationFeatures.length === 0 && divinityFeatures.length === 0 && fightingStyleFeatures.length === 0 && classFeatures.length === 0) {
+  if (subclassFeatures.length === 0 && invocationFeatures.length === 0 && metamagicFeatures.length === 0 && divinityFeatures.length === 0 && fightingStyleFeatures.length === 0 && classFeatures.length === 0) {
     return (
       <div className="class-features">
         <p className="info-text">No class features found.</p>
@@ -4964,8 +5212,11 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, ef
                   />
                   {feature.description && (
                     <FeatureDescriptionBlock
+                      feature={feature}
                       featureId={featureId}
                       description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                      activeSelection={activeFeatureSelections?.[featureId]}
+                      onSelectionChange={onFeatureSelectionChange}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -5040,8 +5291,88 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, ef
                   />
                   {feature.description && (
                     <FeatureDescriptionBlock
+                      feature={feature}
                       featureId={featureId}
                       description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                      activeSelection={activeFeatureSelections?.[featureId]}
+                      onSelectionChange={onFeatureSelectionChange}
+                      expanded={!!expandedDescriptions[featureId]}
+                      onToggle={onDescriptionToggle}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Metamagic */}
+      {metamagicFeatures.length > 0 && (
+        <div className="feature-group">
+          <h4 className="feature-group-header">Metamagic</h4>
+          <div className="feature-list">
+            {metamagicFeatures.map((feature, idx) => {
+              const sourceDisplay = getSourceDisplayName(feature);
+              const featureLevel = getSourceLevel(feature);
+              const featureId = feature.id || `metamagic-${feature.name || idx}`;
+              const featurePool = getFeaturePool(feature, character.level, abilityModifiers);
+              const featureGauge = getFeatureGauge(feature, character.level, abilityModifiers, effectiveMaxHP);
+              return (
+                <div
+                  key={idx}
+                  className="feature-item"
+                  onClick={(event) => {
+                    if (isFeatureToggleIgnored(event.target)) return;
+                    onDescriptionToggle(featureId);
+                  }}
+                >
+                  <div className="feature-header">
+                    <h3 className="feature-name">{feature.name}</h3>
+                    {featureLevel && <span className="feature-source">{sourceDisplay} — {featureLevel}</span>}
+                  </div>
+                  <FeatureUsesTracker
+                    maxUses={calculateMaxUses(feature.max_uses, proficiencyBonus, abilityModifiers, character.level, feature)}
+                    featureId={featureId}
+                    storedUses={usesState[featureId]}
+                    onUsesChange={onUsesChange}
+                  />
+                  {featurePool && (
+                    <FeaturePoolTracker
+                      poolMax={featurePool.max}
+                      featureId={`${featureId}-pool`}
+                      poolName={featurePool.name}
+                      storedValue={poolState[`${featureId}-pool`]}
+                      onPoolChange={onPoolChange}
+                    />
+                  )}
+                  {featureGauge && (
+                    <FeatureGaugeTracker
+                      gauge={featureGauge}
+                      featureId={`${featureId}-gauge`}
+                      storedState={poolState[`${featureId}-gauge`]}
+                      onGaugeChange={onPoolChange}
+                    />
+                  )}
+                  <FeatureSelectControl
+                    feature={feature}
+                    featureId={featureId}
+                    activeSelection={activeFeatureSelections?.[featureId]}
+                    onSelectionChange={onFeatureSelectionChange}
+                  />
+                  <StanceSelector
+                    feature={feature}
+                    featureId={featureId}
+                    activeStance={activeStances?.[featureId]}
+                    onStanceChange={onStanceChange}
+                  />
+                  {feature.description && (
+                    <FeatureDescriptionBlock
+                      feature={feature}
+                      featureId={featureId}
+                      description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                      activeSelection={activeFeatureSelections?.[featureId]}
+                      onSelectionChange={onFeatureSelectionChange}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -5116,8 +5447,11 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, ef
                   />
                   {feature.description && (
                     <FeatureDescriptionBlock
+                      feature={feature}
                       featureId={featureId}
                       description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                      activeSelection={activeFeatureSelections?.[featureId]}
+                      onSelectionChange={onFeatureSelectionChange}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -5179,8 +5513,11 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, ef
                   )}
                   {feature.description && (
                     <FeatureDescriptionBlock
+                      feature={feature}
                       featureId={featureId}
                       description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                      activeSelection={activeFeatureSelections?.[featureId]}
+                      onSelectionChange={onFeatureSelectionChange}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -5255,8 +5592,11 @@ function ClassFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, ef
                   />
                   {feature.description && (
                     <FeatureDescriptionBlock
+                      feature={feature}
                       featureId={featureId}
                       description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                      activeSelection={activeFeatureSelections?.[featureId]}
+                      onSelectionChange={onFeatureSelectionChange}
                       expanded={!!expandedDescriptions[featureId]}
                       onToggle={onDescriptionToggle}
                     />
@@ -5396,8 +5736,11 @@ function SpeciesFeaturesSubtab({ character, proficiencyBonus, abilityModifiers, 
             />
             {feature.description && (
               <FeatureDescriptionBlock
+                feature={feature}
                 featureId={featureId}
                 description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                activeSelection={activeFeatureSelections?.[featureId]}
+                onSelectionChange={onFeatureSelectionChange}
                 expanded={!!expandedDescriptions[featureId]}
                 onToggle={onDescriptionToggle}
               />
@@ -5491,8 +5834,11 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, effectiveM
             />
             {feature.description && (
               <FeatureDescriptionBlock
+                feature={feature}
                 featureId={featureId}
                 description={interpolateFeatureText(feature.description, feature, character.level, proficiencyBonus, abilityModifiers)}
+                activeSelection={activeFeatureSelections?.[featureId]}
+                onSelectionChange={onFeatureSelectionChange}
                 expanded={!!expandedDescriptions[featureId]}
                 onToggle={onDescriptionToggle}
               />
@@ -5614,8 +5960,11 @@ function FeatsSubtab({ character, proficiencyBonus, abilityModifiers, effectiveM
               />
               {featDescription && (
                 <FeatureDescriptionBlock
+                  feature={feat}
                   featureId={featId}
                   description={interpolateFeatureText(featDescription, feat, character.level, proficiencyBonus, abilityModifiers)}
+                  activeSelection={activeFeatureSelections?.[featId]}
+                  onSelectionChange={onFeatureSelectionChange}
                   expanded={!!expandedDescriptions[featId]}
                   onToggle={onDescriptionToggle}
                 />

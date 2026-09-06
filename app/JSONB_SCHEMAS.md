@@ -482,17 +482,36 @@ Filtered spell damage benefit (Potent Spellcasting):
 
 When `spells` is omitted, the bonus engine resolves spell names from the character's fetched spell records using `spell_lists` and `spell_level`. Spell metadata remains owned by the `spells` table. This adds the modifier to matching spell damage only; it does not affect attack rolls or non-matching spells.
 
+Toggleable spell feature (Innate Sorcery):
+```json
+[
+  {
+    "type": "stance",
+    "stances": [
+      {
+        "name": "Active",
+        "benefits": [
+          { "type": "spell_save_dc_bonus", "amount": 1, "spell_lists": ["Sorcerer"] },
+          { "type": "spell_attack_advantage", "spell_lists": ["Sorcerer"] }
+        ]
+      }
+    ]
+  }
+]
+```
+
+Set the feature row's `max_uses` to `2` and `reset_on` to `long`. The existing stance control is the persistent activation toggle; its nested benefits apply only while active. The use tracker records the two uses and the normal Long Rest flow restores them.
+
 Note: For features granting expertise, use the `skill_expertise` benefit type in `character_features.benefits` (see Character Features Table section).
 
 Weapon ability toggle (Pact of the Blade-style feature):
 ```json
 {
-  "type": "weapon_attack_ability",
-  "ability_mod": "charisma"
+  "type": "pact_weapon"
 }
 ```
 
-This reuses the existing `weapon_attack_ability` metadata path. The character sheet adds a toggle to each eligible equipped weapon's attack action. The player uses that toggle to designate the active Pact weapon. When enabled, the existing attack calculation uses the declared ability modifier for both the attack roll and damage. The benefit does not duplicate weapon data or create a numeric bonus.
+This is a dedicated Pact of the Blade benefit. The character sheet adds a Pact checkbox to each equipped weapon's attack action, and the player uses it to designate one active Pact weapon. When checked, that weapon uses Charisma for both attack and damage. Generic `weapon_attack_ability` benefits remain automatic and do not render Pact UI.
 
 ---
 
@@ -542,6 +561,7 @@ Array<
   | { type: 'skill_expertise'; skills: string[]; level_scaling?: Record<string, { skills: string[] }> }
   | { type: 'skill_dual_ability'; skills: string[]; ability: string }
   | { type: 'skill_half_proficiency' }
+  | { type: 'd20_ability_override'; source_abilities: Array<'strength' | 'dexterity' | string>; replacement_ability: string; applies_to: Array<'checks' | 'saving_throws' | 'attack_rolls'>; requires_stance?: string }
   | { type: 'armor_proficiency'; level: 'light' | 'medium' | 'heavy' | string }
   | { type: 'shield_proficiency'; value?: boolean }
   | { type: 'bonus_action'; name: string; range?: string; target?: string; pb_multiplier?: number }
@@ -576,6 +596,7 @@ Array<
       type: 'select';
       select: {
         choices?: any[];
+        max_selections?: number; // Defaults to 1; multi-select values are persisted as arrays
         [choiceId: string]: any;
       };
     }

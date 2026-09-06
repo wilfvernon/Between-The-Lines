@@ -5,7 +5,7 @@
 - **Character Import/Export**: Users can import/export characters in JSON format using D&D Beyond’s API.
     - **Import**: Fetch character data from D&D Beyond and map to the sheet fields.
     - **Export**: Convert character sheet data into JSON format for D&D Beyond.
-- **Homebrew Content Management**: Enable tracking and management of homebrew content with source attribution.
+- **Homebrew Content Management**: Enable tracking and management of homebrew content with source attribution.con
   
 ## Database Schema
 - **Characters**: Table structure for storing character information.
