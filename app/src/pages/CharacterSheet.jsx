@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import useEmblaCarousel from 'embla-carousel-react';
 import PropTypes from 'prop-types';
 import { collectBonuses, deriveCharacterStats } from '../lib/bonusEngine';
@@ -191,6 +192,18 @@ const getAbilityBonuses = (allBonuses = [], abilityName) => {
 const TAB_ORDER = ['bio', 'abilities', 'skills', 'actions', 'spells', 'inventory', 'features', 'creatures'];
 const FEATURE_DESCRIPTION_LIMIT = 240;
 const DEFAULT_FILTERS = ['Weapons', 'Armour', 'Magic', 'Gear', 'Trinkets'];
+
+// Double newlines for paragraph spacing, but keep markdown table rows adjacent
+const spaceMarkdownParagraphs = (text) => {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  return lines
+    .map((line, index) => {
+      if (index === lines.length - 1) return line;
+      const tableAdjacent = line.trim().startsWith('|') && lines[index + 1].trim().startsWith('|');
+      return line + (tableAdjacent ? '\n' : '\n\n');
+    })
+    .join('');
+};
 
 const RARITY_ORDER = {
   'artifact': 0,
@@ -4005,7 +4018,7 @@ function ItemModal({
               )}
               
               <div className="item-description">
-                <ReactMarkdown>{(itemDescriptionText || '').replace(/\n/g, '\n\n')}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{spaceMarkdownParagraphs(itemDescriptionText)}</ReactMarkdown>
               </div>
             </div>
           )}
